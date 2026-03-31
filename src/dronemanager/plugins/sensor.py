@@ -1,4 +1,15 @@
-""" Plugin and ABC for external sensors, such as weather sensors."""
+""" Plugin and abstract base class for external sensors, such as weather sensors.
+
+They're specifically for plugins that connect to and sporadically query some external data source.
+
+Similar to missions, these are a special type of plugin with extra functions to support their intended purpose.
+The core extra component is the :py:meth:`~dronemanager.plugins.sensor.Sensor.get_data` function, which should
+return whatever data the sensor provides.
+Like missions, sensor modules go into their own special folder ``sensors``. Each sensor module can contain exactly one
+specific sensor plugin, which must subclass :py:class:`~dronemanager.plugins.sensor.Sensor` and end with "Sensor"
+
+Note that sensors are not callback based, so data sources that should be processed continuously should not be
+implemented as a sensor."""
 import asyncio
 import abc
 import importlib
@@ -12,7 +23,20 @@ from dronemanager.plugin import Plugin
 
 
 class SensorPlugin(Plugin):
-    PREFIX = "sensor"
+    """ This plugin handles loading and management of sensor plugins.
+
+    Only supports two CLI commands:
+
+    * ``load``: Load a new sensor, optionally with a custom name to have multiple sensors of the same type
+    * ``status``: Log information about currently loaded sensors, by calling
+      :py:meth:`Sensor.status() <dronemanager.plugins.sensor.Sensor.status>`
+
+    Attributes:
+        PREFIX: (class attribute) The prefix for the CLI commands.
+        sensors: A dictionary with the sensor names as keys and their associated sensor objects.
+    """
+
+    PREFIX: str = "sensor"
 
     def __init__(self, dm, logger, name):
         super().__init__(dm, logger, name)
@@ -23,14 +47,17 @@ class SensorPlugin(Plugin):
         self.sensors: dict[str, Sensor] = {}
 
     async def close(self):
-        """ Stop all missions.
+        """ Stop all sensors.
 
-        :return:
+        Called on DroneManager exit.
         """
         await asyncio.gather(*[sensor.close() for sensor in list(self.sensors.values())])
         await super().close()
 
     def sensor_options(self):
+        """ Get the possible sensor files, by traversing the sensor directory.
+
+        """
         # Go through every file in mission folder
         _base_dir = Path(__file__).parent.parent
         _plugin_dir = _base_dir.joinpath("sensors")
@@ -38,7 +65,17 @@ class SensorPlugin(Plugin):
                    if name.is_file() and name.suffix == ".py" and not name.stem.startswith("_")]
         return modules
 
-    def _get_sensor_class(self, module) -> None | type:
+    def _get_sensor_class(self, module: str) -> None | type:
+        """ Given a module name, find and return the sensor class type in that module.
+
+        Returns None if no sensor class is found, or the module doesn't meet other requirements.
+
+        Args:
+            module: The name of the python module, without the file ending.
+
+        Returns:
+            The sensor class if one is found, ``None`` otherwise.
+        """
         try:
             plugin_mod = importlib.import_module("." + module, "dronemanager.sensors")
             plugin_classes = [member[1] for member in inspect.getmembers(plugin_mod, inspect.isclass)
@@ -52,12 +89,17 @@ class SensorPlugin(Plugin):
             self.logger.debug(repr(e), exc_info=True)
             return None
 
-    async def load(self, mission_module: str, name: str | None = None):
+    async def load(self, sensor_module: str, name: str | None = None):
         """ Load a new sensor, which work like plugins with the name taking the role of the prefix.
 
-        :return:
+        Args:
+            sensor_module: The python module with the sensor class that should be loaded.
+            name:
+
+        Returns:
+
         """
-        sensor = await self.dm.load_plugin(mission_module, name, self.sensor_options(), self._get_sensor_class)
+        sensor = await self.dm.load_plugin(sensor_module, name, self.sensor_options(), self._get_sensor_class)
         if sensor:
             self.sensors[name] = sensor
         return sensor

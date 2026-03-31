@@ -196,6 +196,7 @@ class ENGELDataMission(Mission):
         await self.camera.set_parameter("RANGE_MAX", 40.0)
         await self.camera.set_parameter("RANGE_MIN", 10.0)
         await self.camera.set_parameter("MAIN_CAM", self.camera.parse_param_value("MAIN_CAM", "Visible"))
+        await self.camera.set_parameter("LAYOUT_MAIN", self.camera.parse_param_value("LAYOUT_MAIN", "Fullscreen"))
         await self.camera.set_parameter("ZOOM_THERMO_I", self.camera.parse_param_value("ZOOM_THERMO_I", "1.0"))
         await self.camera.set_parameter("ZOOM_VISIBLE_I", self.camera.parse_param_value("ZOOM_VISIBLE_I", "1.0"))
 
@@ -317,7 +318,7 @@ class ENGELDataMission(Mission):
                 # Fly to position and point gimbal
                 # Have to reset gimbal position to drone-relative 0 to prevent running into gimbal limit
                 await self.gimbal.set_gimbal_mode("follow")
-                await self.gimbal.set_gimbal_angles(0.0, 0.0)
+                await self.gimbal.set_gimbal_angles(0.1, 0.1)
                 if drone.is_armed and drone.in_air:
                     # Fly to position
                     # We only try to fly if we are armed an in the air. This is convenient for ground testing.
@@ -326,20 +327,7 @@ class ENGELDataMission(Mission):
                 # Wait until camera parameters are set
                 await cam_set_task
                 # Point gimbal
-                # We want to point the gimbal in an absolute direction, so we have to account for drone attitude
-                reference_dronepitch_corrected = _roll_pitch_compensation(reference_image.gimbal_att[2]*math.pi/180,
-                                                                          reference_image.drone_att[0],
-                                                                          reference_image.drone_att[1])
-                target_total_pitch = reference_image.gimbal_att[1] + reference_dronepitch_corrected
-
-                # Initial coarse adjustment with time for gimbal to move
-                # Pitch contribution of drone at the same gimbal yaw as original picture
-                # The gimbal yaw might change a little over time, but good enough for first pass
-                current_dronepitch_corrected = _roll_pitch_compensation(reference_image.gimbal_att[2]*math.pi/180,
-                                                                        drone.attitude[0],
-                                                                        drone.attitude[1])
-
-                target_gimbal_pitch = target_total_pitch - current_dronepitch_corrected
+                target_gimbal_pitch = reference_image.gimbal_att[1]
                 target_gimbal_yaw = reference_image.gimbal_yaw_absolute
 
                 if self._gimbal_max_pitch < target_gimbal_pitch < self._gimbal_min_pitch:
@@ -349,23 +337,6 @@ class ENGELDataMission(Mission):
                 await self.gimbal.set_gimbal_mode("lock")
                 await self.gimbal.set_gimbal_angles(target_gimbal_pitch, target_gimbal_yaw)
                 await asyncio.sleep(3)
-                skip = False
-                # Fine gimbal adjustment
-                while (abs(self.gimbal.pitch - target_gimbal_pitch) > 0.25
-                       or abs(self.gimbal.yaw_absolute - target_gimbal_yaw) > 0.25):
-                    current_dronepitch_corrected = _roll_pitch_compensation(self.gimbal.yaw*math.pi/180,
-                                                                            drone.attitude[0],
-                                                                            drone.attitude[1])
-                    target_gimbal_pitch = target_total_pitch - current_dronepitch_corrected  # Recompute pitch target for possible drone change in pitch
-                    if self._gimbal_max_pitch < target_gimbal_pitch < self._gimbal_min_pitch:
-                        self.logger.info("Replay exceeding gimbal limit, skipping...")
-                        skip = True
-                        break
-
-                    await self.gimbal.set_gimbal_angles(target_gimbal_pitch, target_gimbal_yaw)
-                    await asyncio.sleep(0.2)
-                if skip:
-                    continue
                 # Refine position and gimbal attitude based on previous image
                 # TODO: Integrate from other repo, more eval on simulation first
 
@@ -374,7 +345,7 @@ class ENGELDataMission(Mission):
 
                 # Reset gimbal
                 await self.gimbal.set_gimbal_mode("follow")
-                await self.gimbal.set_gimbal_angles(0.0, 0.0)
+                await self.gimbal.set_gimbal_angles(0.1, 0.1) # Set a non-zero to make sure gimbal responds
             except Exception as e:
                 self.logger.warning(f"Exception with replay for capture {capture.capture_id}")
                 self.logger.debug(repr(e), exc_info=True)
@@ -540,10 +511,9 @@ class ENGELDataMission(Mission):
                     rtl_pos[2] += self.rtl_height
                     self.launch_point = Waypoint(WayPointType.POS_GLOBAL, gps=rtl_pos, yaw=cur_yaw)
                     await self.gimbal.take_control()
-                    # Set the gimbal mode to follow and have it point straight forward to prevent drone motion from
-                    # moving the gimbal into yaw limits.
-                    await self.gimbal.set_gimbal_mode("follow")
-                    await self.gimbal.set_gimbal_angles(0.0, 0.0)
+                    # Set the gimbal mode to lock to ensure that we are recoding absolute pitch values from gimbal
+                    await self.gimbal.set_gimbal_mode("lock")
+                    await self.gimbal.set_gimbal_angles(0.1, 0.1)
                     self._gimbal_frequency = self.dm.drones[self.drone_name].position_update_rate
                     self._register_controller_inputs()
                     self.dm.controllers.set_drone(self.drone_name)
