@@ -66,7 +66,6 @@ class RectLocalFence(Fence):
                 speed_limit = 0
             else:
                 speed_limit = min(speed_limit, math.sqrt(2 * acceleration * (distance + 0.000001)))  # Avoid /0 error
-
             return speed_limit
 
         speed_limit_down = _limit_speed(self.down_upper - z, speed_limit_down, acceleration_vertical)
@@ -79,11 +78,9 @@ class RectLocalFence(Fence):
                 c_input = c_input * speed_limit_b / max_speed_b
             return c_input
 
-        self.logger.info(f"{vertical_input, max_speed_up, max_speed_down}")
         vertical_speed = vertical_input * max_speed_up if vertical_input < 0 else vertical_input * max_speed_down
         vertical_input = _adjust_input(vertical_input, vertical_speed, speed_limit_down, speed_limit_up,
                                        max_speed_down, max_speed_up)
-        self.logger.info(f"Adjusted vertical input {vertical_input}")
 
         # for horizontal motion, determine the input heading in the fence coordinate system and then determine the
         # distance to the fence following the line from the current position along the input heading, then scale both
