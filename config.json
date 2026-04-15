@@ -33,7 +33,7 @@
       "max_h_vel": 3.0,
       "max_down_vel": 1.0,
       "max_up_vel": 1.0,
-      "max_h_acc": 1.5,
+      "max_h_acc": 2.0,
       "max_v_acc": 0.5,
       "max_h_jerk": 0.5,
       "max_v_jerk": 0.5,

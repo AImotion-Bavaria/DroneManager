@@ -44,9 +44,9 @@ class RectLocalFence(Fence):
                 self._warned_on_params.add(drone)
             return forward_input, right_input, vertical_input, yaw_input
         # This needs the params to be loaded, provide a warning if they aren't loaded yet and then just pass on
-        max_speed_h = drone.drone_params.max_h_vel
-        max_speed_down = drone.config.max_down_vel
-        max_speed_up = drone.config.max_up_vel
+        max_speed_h = drone.drone_params.max_h_vel if drone.drone_params.max_h_vel >= drone.config.max_h_vel else drone.config.max_h_vel
+        max_speed_down = drone.config.max_down_vel if drone.config.max_down_vel >= drone.config.max_down_vel else drone.config.max_down_vel
+        max_speed_up = drone.config.max_up_vel if drone.config.max_up_vel >= drone.config.max_up_vel else drone.config.max_up_vel
 
         speed_limit_horizontal = drone.config.max_h_vel
         speed_limit_down = drone.config.max_down_vel
@@ -124,11 +124,16 @@ class RectLocalFence(Fence):
         forward_input *= scaling_factor 
         right_input *= scaling_factor
 
-        for stick_input in [forward_input, right_input, vertical_input]:
-            if stick_input > .99: 
-                stick_input = .99
-            if stick_input < -.99:
-                stick_input = -.99
+        def clamp_output_values(output):
+            if output > .99:
+                output = .99
+            if output < -.99:
+                output = -.99
+            return output
+
+        forward_input = clamp_output_values(forward_input)
+        right_input = clamp_output_values(right_input)
+        vertical_input = clamp_output_values(vertical_input)
 
         #self.logger.info(f"{scaling_factor, speed_limit_horizontal, drone.config.max_h_vel, distance_horizontal, acceleration_horizontal}")
 
