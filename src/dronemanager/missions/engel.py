@@ -130,6 +130,7 @@ class ENGELDataMission(Mission):
             "test-command": self.test_command,
             "test-stop": self.stop_test,
             "test-close": self.close_test,
+            "test-rates": self.rate_test,
         }
         self.cli_commands.update(mission_cli_commands)
         self.weather_sensor = None
@@ -166,6 +167,7 @@ class ENGELDataMission(Mission):
         self.translation_shift = None
         self.rotation_shift = None
         self.rotation_target = None
+        self._loop = asyncio.get_running_loop()
 
     async def close(self):
         for button, func in self._added_controller_buttons.items():
@@ -633,19 +635,38 @@ class ENGELDataMission(Mission):
 
     def correction_callback(self, parsed_message):
         if parsed_message:
-            rotation = parsed_message["rotation"]  # roll pitch yaw in degrees per second
-            translation = parsed_message["translation"]  # x y z in cm / s
-            rotation_target = parsed_message["target"]
-            self.logger.info(parsed_message)
-            self.translation_shift = translation / 100
-            self.rotation_target = rotation_target
-            self.rotation_shift = rotation
+            try:
+                rotation = parsed_message["rotation"]  # roll pitch yaw in degrees per second
+                translation = parsed_message["translation"]  # x y z in cm / s
+                rotation_target = parsed_message["target"]
+                self.logger.info(parsed_message)
+                self.translation_shift = translation / 100
+                self.rotation_target = rotation_target
+                self.rotation_shift = rotation
 
-            # Do this here for testing
-            self.logger.info(f"Received message {parsed_message}")
-            _, pitch_rate, yaw_rate = self.rotation_shift
-            gimbal_task = asyncio.create_task(self.gimbal.set_gimbal_rates(pitch_rate, yaw_rate))
-            gimbal_awaiter_task = asyncio.create_task(coroutine_awaiter(gimbal_task, self.logger))
+                # Do this here for testing
+                self.logger.info(f"Received message {parsed_message}")
+                _, pitch_rate, yaw_rate = self.rotation_shift
+                gimbal_task = asyncio.run_coroutine_threadsafe(self.gimbal.set_gimbal_rates(pitch_rate, yaw_rate), self._loop)
+                gimbal_awaiter_task = asyncio.run_coroutine_threadsafe(coroutine_awaiter(gimbal_task, self.logger), self._loop)
+            except Exception as e:
+                self.logger.warning("Exception forward position message! See log for details")
+                self.logger.debug(repr(e), exc_info=True)
+
+    async def rate_test(self):
+        start_time = time.time()
+        while True:
+            try:
+                await asyncio.sleep(1/10)
+                t = (time.time()-start_time) * math.pi / 180
+                p_rate = math.sin(t*20)*5
+                y_rate = math.cos(t*20)*5
+
+                gimbal_task = asyncio.create_task(self.gimbal.set_gimbal_rates(p_rate, y_rate))
+                gimbal_awaiter_task = asyncio.create_task(coroutine_awaiter(gimbal_task, self.logger))
+            except Exception as e:
+                self.logger.warning("Exception setting gimbal rates!")
+                self.logger.debug(repr(e), exc_info=True)
 
     async def init_test(self, ip: str = "127.0.0.1", command_port: int = 9020, data_port: int = 9010):
         self.logger.info("Performing setup for position correction algorithm...")
