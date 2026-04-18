@@ -344,7 +344,7 @@ class Drone(ABC, threading.Thread):
         pass
 
     @abstractmethod
-    async def takeoff(self, altitude=2.0) -> bool:
+    async def takeoff(self, altitude=2.0, allow_in_air=False) -> bool:
         """ Takes off to the specified altitude above current position.
 
         Note that altitude is positive.
@@ -911,12 +911,15 @@ class DroneMAVSDK(Drone):
         if not self.is_armed:
             raise RuntimeError("Can't take off without being armed!")
 
-    async def takeoff(self, altitude=2.0) -> bool:
+    async def takeoff(self, altitude=2.0, allow_in_air=True) -> bool:
         """
 
         :param altitude:
         :return:
         """
+        if not allow_in_air and self.in_air:
+            self.logger.debug("Can't takeoff again, already in the air!")
+            return False
         if self.path_follower.is_active:
             await self.path_follower.deactivate()
         res =  await self._takeoff_using_offboard(altitude=altitude)

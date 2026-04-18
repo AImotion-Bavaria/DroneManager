@@ -340,9 +340,9 @@ class DroneManager:
         return await self._multiple_drone_action(self.drone_class.disarm, names,
                                                  "Disarming drone(s) {}.", schedule=schedule)
 
-    async def takeoff(self, names: str | Collection[str], altitude=2.0, schedule=False):
+    async def takeoff(self, names: str | Collection[str], altitude=2.0, schedule=False, allow_in_air=True):
         return await self._multiple_drone_action(self.drone_class.takeoff, names,
-                                                 "Takeoff for Drone(s) {}.", altitude, schedule=schedule)
+                                                 "Takeoff for Drone(s) {}.", altitude, schedule=schedule, allow_in_air=allow_in_air)
 
     async def change_flightmode(self, names: str | Collection[str], flightmode: str, schedule=False):
         await self._multiple_drone_action(self.drone_class.change_flight_mode,

@@ -265,7 +265,7 @@ class ControllerPlugin(Plugin):
             action = self.dm.land(self._drone_name)
         elif button == self._mapping.takeoff_button:
             self.logger.debug("Takeoff button pressed")
-            action = self.dm.takeoff(self._drone_name, altitude = 1.5)
+            action = self.dm.takeoff(self._drone_name, altitude = 1.5, allow_in_air=False)
         else:
             self.logger.info(f"Pressed unbound button {button}")
 
