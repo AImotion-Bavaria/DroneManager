@@ -1,0 +1,27 @@
+{
+  "name": "streamermultiple",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "pkg server.js --targets node18-win-x64 --output dist/StreamerMultiple.exe && cp index.html jsmpeg.min.js dist/"
+  },
+  "pkg": {
+    "assets": [
+      "index.html",
+      "jsmpeg.min.js"
+    ],
+    "targets": [
+      "node18-win-x64"
+    ]
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "node-rtsp-stream": "^0.0.9",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}

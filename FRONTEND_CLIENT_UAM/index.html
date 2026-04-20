@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>SAR</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8" />
+  <meta content="width=device-width, initial-scale=1" name="viewport" />
+  <style>
+    @import url("https://fonts.googleapis.com/css?family=Inter:400");
+  </style>
+  <link href="tailwind.css" rel="stylesheet" />
+  <style>
+    body {
+      background-color: #353535;
+    }
+
+    /* Add this to your global CSS */
+    .animating {
+      /* This class is added during animation */
+      pointer-events: none;
+      /* Prevent clicks during animation */
+    }
+
+    /* Define custom transition duration class that works with Tailwind */
+    .duration-2000 {
+      transition-duration: 2000ms;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app"></div>
+  <script type="module" src="./src/index.tsx"></script>
+</body>
+
+</html>
