@@ -12,7 +12,7 @@ Ground-control web UI for monitoring and coordinating a fleet of autonomous dron
 |---|---|---|
 | **Frontend** (`FRONTEND_CLIENT_UAM/`) | React 18 + TypeScript + Electron | Map UI, drone cards, video feeds |
 | **Streamer** (`STREAMERMULTIPLE_UAM/`) | Node.js + FFmpeg + JSMpeg | RTSP → WebSocket MPEG1 video pipeline |
-| **Backend / Transporter** (`TRANSPORTER/`) | Python + FastAPI + MAVSDK | Telemetry bridge from DroneManager → WebSocket | Coming soon REST API documentation
+| **Backend / Transporter** (`TRANSPORTER/`) | Python + FastAPI + MAVSDK | Telemetry bridge from DroneManager → WebSocket | REST API Swagger documentation is coming soon |
  
 The system connects to an external **DroneManager** application that manages MAVLink communication with the physical drones.
  
@@ -22,8 +22,21 @@ The system connects to an external **DroneManager** application that manages MAV
  
 - **Node.js** 18+
 - **Python** 3.10+
-- **FFmpeg** (bundled in `STREAMERMULTIPLE_UAM/` for Windows)
+- **FFmpeg** (bundled inside `StreamerMultiple.exe` for Windows)
 - **DroneManager** running and accessible on UDP port `31659`
+ 
+---
+ 
+## Pre-built Binaries (Windows x64)
+ 
+Large build artifacts are not stored in this repository. Download them from Google Drive:
+ 
+**[Download pre-built binaries (Google Drive)](https://drive.google.com/drive/folders/19vjkobY_BCfNCf_sFnyT8JdSH7wSAM1e?usp=sharing)**
+ 
+| File | Place it at |
+|---|---|
+| `StreamerMultiple.exe` | `STREAMERMULTIPLE_UAM/dist/StreamerMultiple.exe` |
+| `dist-electron/` folder | `FRONTEND_CLIENT_UAM/dist-electron/` |
  
 ---
  
@@ -31,12 +44,22 @@ The system connects to an external **DroneManager** application that manages MAV
  
 ### 1. Frontend
  
+**Option A — Run the pre-built Electron app**
+ 
+Download the `dist-electron/` folder from the link above, place it under `FRONTEND_CLIENT_UAM/`, then launch:
+ 
+```
+FRONTEND_CLIENT_UAM/dist-electron/win-unpacked/UAM Control Hub.exe
+```
+ 
+**Option B — Build from source**
+ 
 ```bash
 cd FRONTEND_CLIENT_UAM
 npm install
 ```
  
-Configure the backend host by editing `.env` (or `.env.production` for built output):
+Configure the backend host in `.env`:
  
 ```env
 VITE_WS_URL=ws://<control-host>:8765
@@ -54,9 +77,35 @@ Run as Electron desktop app:
 npm run electron:dev
 ```
  
+Build Electron installer:
+```bash
+npm run electron:build
+# → dist-electron/win-unpacked/UAM Control Hub.exe
+```
+ 
 ---
  
 ### 2. Video Streamer
+ 
+**Option A — Use the pre-built exe (recommended)**
+ 
+Download `StreamerMultiple.exe` from the link above and place it in `STREAMERMULTIPLE_UAM/dist/`:
+ 
+```
+STREAMERMULTIPLE_UAM/
+└── dist/
+    ├── StreamerMultiple.exe   ← place here
+    ├── index.html
+    └── jsmpeg.min.js
+```
+ 
+Run it:
+```
+STREAMERMULTIPLE_UAM/dist/StreamerMultiple.exe
+# → http://localhost:3005
+```
+ 
+**Option B — Run from source**
  
 ```bash
 cd STREAMERMULTIPLE_UAM
@@ -79,7 +128,6 @@ Each drone's RTSP camera stream is exposed as a WebSocket:
  
 ```bash
 cd TRANSPORTER
-pip install -r requirements.txt   # if applicable
 python udp_transporter.py
 # → WebSocket server on :8765
 ```
@@ -107,5 +155,6 @@ python udp_transporter.py   # terminal 2 — bridges to WS :8765
  
 ## License
  
-See individual component directories for license information.
+See individual component directories for license information. This web plugin developed by HMT TTZ THI. 
+ 
  
