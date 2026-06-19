@@ -12,6 +12,8 @@ import importlib
 from collections.abc import Collection
 from asyncio.exceptions import TimeoutError, CancelledError
 
+import traceback
+
 from dronemanager.drone import Drone, parse_address, DroneConfigs, DroneConfig
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 from dronemanager.utils import COMMON_FORMATTER, get_free_port, LOG_DIR
@@ -325,6 +327,8 @@ class DroneManager:
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     self.logger.error(f"Drone {names[i]} failed due to: {repr(result)}")
+                    exc_tb = traceback.format_exception(result)
+                    self.logger.debug("".join(exc_tb))
             return results
         except KeyError:
             self.logger.warning(f"No drones named {[name for name in names if name not in self.drones]}!")

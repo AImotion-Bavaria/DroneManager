@@ -124,6 +124,7 @@ class RuckigOfflineFollower(PathFollower):
             cur_time = time.time()-self.traj_start_time
             pos, vel, acc = self.planner_output.at_time(cur_time)
             setpoint_offset, yaw_vel, yaw_acc = self.yaw_output.at_time(cur_time)
+            setpoint_offset = setpoint_offset[0]
             yaw_setpoint = (setpoint_offset + self.init_yaw + 180) % 360 - 180  # Actual target yaw in -180 - +180
             setpoint = Waypoint(WayPointType.POS_VEL_ACC_NED, pos=pos, vel=vel, acc=acc, yaw=yaw_setpoint)
             if self.drone.check_waypoint(setpoint):

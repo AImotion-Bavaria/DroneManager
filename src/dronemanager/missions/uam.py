@@ -191,6 +191,7 @@ class UAMMission(Mission):
             self.start_positions_y[name] = start_positions[i]
 
     async def _battery_drainer(self):
+        counter = 0
         while True:
             try:
                 await asyncio.sleep(1/self.update_rate)
@@ -205,6 +206,9 @@ class UAMMission(Mission):
                         #if battery.level > 1.0:
                         battery.level = 1.0
                 self.additional_info = {"bat": self.battery_levels}
+                counter += 1
+                if counter % (self.update_rate * 10) == 0:
+                    self.logger.info(f"UAM Fake battery status: {self.battery_levels}")
             except asyncio.CancelledError:
                 return
             except Exception as e:
@@ -357,20 +361,8 @@ class UAMMission(Mission):
 
     async def _poi_task(self, drone):
         # Fly to POI and start circling
-        # First we slow down, by sending the current position + vel/2 as setpoint
-        cur_pos = self.dm.drones[drone].position_ned
-        cur_vel = self.dm.drones[drone].velocity
-        target_pos = cur_pos + cur_vel / 2
-        target_pos[2] = -self.flight_altitude
-        if self.search_space[0] > target_pos[0]:
-            target_pos[0] = self.search_space[0]
-        elif target_pos[0] > self.search_space[1]:
-            target_pos[0] = self.search_space[1]
-        if self.search_space[2] > target_pos[1]:
-            target_pos[1] = self.search_space[2]
-        elif target_pos[1] > self.search_space[3]:
-            target_pos[1] = self.search_space[3]
-        await self.dm.fly_to(drone, local=target_pos, schedule=False, tol=self.position_tolerance)
+        # First we stop and hold position where we found the POI
+        await self.dm.fly_to(drone, local=self.dm.drones[drone].position_ned, schedule=False, tol=self.position_tolerance)
         # Wait for other drones to be away from POI before circling
         other_drones = list(self.drones.keys())
         other_drones.remove(drone)
@@ -456,6 +448,7 @@ class UAMMission(Mission):
                     observe_task = asyncio.create_task(self._observation_circling(self._observing_drone))
                     self.drone_tasks.add(observe_task)
                     await rtb_task
+                    self.logger.debug("Completed swap")
                 await asyncio.sleep(1/self.update_rate)
         except asyncio.CancelledError:
             self.logger.debug("Cancelling observation function")
@@ -501,6 +494,7 @@ class UAMMission(Mission):
         # Theta is the angle on the circle, with theta = 0 at y = 0
         # We approach the circle by flying directly to the closest point on it, while pointing at it.
         try:
+            self.logger.debug(f"Starting circling with {drone}")
             start_time = time.time()
             start_theta = self._calculate_circle_angle(drone)
             await self.dm.drones[drone].path_follower.deactivate()
@@ -518,7 +512,7 @@ class UAMMission(Mission):
                     return
                 await asyncio.sleep(1/self.update_rate)
         except asyncio.CancelledError:
-            self.logger.debug("Cancelling observation function")
+            self.logger.debug(f"Cancelling circling function for {drone}")
         except Exception as e:
             self.logger.error("Exception in circling function!")
             self.logger.debug(repr(e), exc_info=True)
