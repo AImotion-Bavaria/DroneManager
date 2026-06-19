@@ -28,7 +28,7 @@ class Waypoint:
                  yaw: float | None = None,
                  yaw_rate: float | None = None,):
         # Internal data structure, form [x, y, z, xvel, yvel, zvel, xacc, yacc, zacc, lat, long, amsl, yaw, yaw_rate]
-        self._array: np.ndarray = np.empty((14,), dtype=np.floating)
+        self._array: np.ndarray = np.empty((14,), dtype=np.float64)
 
         self._array[:3] = pos
         self._array[3:6] = vel
