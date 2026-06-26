@@ -7,6 +7,7 @@ name = "DroneManager"
 version = "0.4"
 authors = [
     {name="Dominik Mattern", email="dominik.mattern@thi.de"},
+    {name="Konstantin Bake", email="konstantin.bake@thi.de"},
     {name="Babak Salamat", email="babak.salamat@thi.de"},
     {name="Tim Drouven", email="tim.drouven@thi.de"}, ]
 description = "Package to connect to and control multiple drones, either programmatically or using a CLI."
