@@ -9,7 +9,7 @@ import copy
 from pathlib import Path
 import typing
 import importlib
-from collections.abc import Collection
+from collections.abc import Collection, Callable
 from asyncio.exceptions import TimeoutError, CancelledError
 
 import traceback
@@ -565,7 +565,7 @@ class DroneManager:
         self._on_drone_connect_coros.add(func)
 
     async def load_plugin(self, plugin_module: str, plugin_name: str | None = None, options: list[str] | None = None,
-                          class_getter: callable = None):
+                          class_getter: Callable | None = None):
         plugin = None
         if plugin_name is None:
             plugin_name = plugin_module
