@@ -71,11 +71,7 @@ Gimbal
 Mission
 ^^^^^^^
 
-.. automodule:: dronemanager.plugins.mission
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :no-index:
+Please see :doc:`the mission documentation page <mission>`.
 
 
 Optitrack
@@ -99,11 +95,7 @@ Scripts
 Sensor
 ^^^^^^
 
-.. automodule:: dronemanager.plugins.sensor
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :no-index:
+Please see :doc:`the sensor documentation page <sensor>`.
 
 
 Stream
