@@ -5,7 +5,7 @@ their own commands to the CLI.
 """
 import asyncio
 from abc import ABC
-from collections.abc import Callable, Awaitable, Coroutine
+from collections.abc import Callable, Coroutine
 
 
 # TODO: Figure out scheduling
@@ -37,10 +37,10 @@ class Plugin(ABC):
         dm: The DroneManager instance connected to this plugin.
         logger: The parent logger. A child logger with the name of the class is created below this.
         name (str): The name for this instance of the plugin.
-        cli_commands: A dictionary with input strings as keys and the associated coroutines as values.
-          The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``.
-        background_functions: A list with coroutines which will be launched automatically once the plugin has loaded.
-          These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``.
+        cli_commands (dict[str, Callable]): A dictionary with input strings as keys and the associated coroutines as
+          values. The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``.
+        background_functions (list[Coroutine]): A list with coroutines which will be launched automatically once the
+          plugin has loaded. These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``.
     """
 
     PREFIX: str = "abc"
@@ -49,11 +49,11 @@ class Plugin(ABC):
     """DEPENDENCIES: (class attribute) Other plugins that this plugin depends on."""
 
     def __init__(self, dm, logger, name, *args, **kwargs):
-        self.dm: "dronemanager.core.DroneManager" = dm
+        self.dm = dm
         self.logger = logger.getChild(self.__class__.__name__)
         self.name = name
-        self.cli_commands: dict[str, Callable] = {}
-        self.background_functions: list[Coroutine] = []
+        self.cli_commands = {}
+        self.background_functions = []
         self._running_tasks = set()
 
     def start_background_functions(self):
