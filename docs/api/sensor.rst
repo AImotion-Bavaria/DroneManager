@@ -15,14 +15,14 @@ Sensor Base Class
    :undoc-members:
    :show-inheritance:
 
+..
+    Sensors list
+    ------------
 
-Sensors list
-------------
+    Ecowitt
+    ^^^^^^^
 
-Ecowitt
-^^^^^^^
-
-.. automodule:: dronemanager.sensors.ecowitt
-   :members:
-   :undoc-members:
-   :show-inheritance:
+    .. automodule:: dronemanager.sensors.ecowitt
+       :members:
+       :undoc-members:
+       :show-inheritance:
