@@ -36,7 +36,7 @@ class Plugin(ABC):
     Attributes:
         dm: The DroneManager instance connected to this plugin.
         logger: The parent logger. A child logger with the name of the class is created below this.
-        name: The name for this instance of the plugin.
+        name (str): The name for this instance of the plugin.
         cli_commands: A dictionary with input strings as keys and the associated coroutines as values.
           The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``.
         background_functions: A list with coroutines which will be launched automatically once the plugin has loaded.
@@ -51,7 +51,7 @@ class Plugin(ABC):
     def __init__(self, dm, logger, name, *args, **kwargs):
         self.dm: "dronemanager.core.DroneManager" = dm
         self.logger = logger.getChild(self.__class__.__name__)
-        self.name: str = name
+        self.name = name
         self.cli_commands: dict[str, Callable] = {}
         self.background_functions: list[Coroutine] = []
         self._running_tasks = set()
