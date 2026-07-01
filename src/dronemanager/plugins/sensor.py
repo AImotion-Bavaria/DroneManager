@@ -32,11 +32,11 @@ class SensorPlugin(Plugin):
       :py:meth:`Sensor.status() <dronemanager.plugins.sensor.Sensor.status>`
 
     Attributes:
-        PREFIX: (class attribute) The prefix for the CLI commands.
         sensors: A dictionary with the sensor names as keys and their associated sensor objects.
     """
 
     PREFIX: str = "sensor"
+    """ PREFIX: (class attribute) The prefix for the CLI commands, "sensor" by default."""
 
     def __init__(self, dm, logger, name):
         super().__init__(dm, logger, name)

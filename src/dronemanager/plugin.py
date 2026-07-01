@@ -31,14 +31,12 @@ class Plugin(ABC):
 
     A common kwarg is "name", for plugins of which multiple copies may be loaded, in which case the name acts as the
     unique identifier.
-
-    Attributes:
-        PREFIX: (class attribute) The prefix for the CLI commands.
-        DEPENDENCIES: (class attribute) Other plugins that this plugin depends on.
     """
 
-    PREFIX = "abc"
-    DEPENDENCIES = []
+    PREFIX: str = "abc"
+    """PREFIX: (class attribute) The prefix for the CLI commands."""
+    DEPENDENCIES: list[str] = []
+    """DEPENDENCIES: (class attribute) Other plugins that this plugin depends on."""
 
     def __init__(self, dm, logger, name, *args, **kwargs):
         self.dm: "dronemanager.dronemanager.DroneManager" = dm
