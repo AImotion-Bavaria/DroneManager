@@ -5,7 +5,7 @@ their own commands to the CLI.
 """
 import asyncio
 from abc import ABC
-from collections.abc import Callable, Coroutine
+from collections.abc import Coroutine
 
 
 # TODO: Figure out scheduling
@@ -34,8 +34,8 @@ class Plugin(ABC):
     unique identifier.
 
     Attributes:
-        dm: The DroneManager instance connected to this plugin.
-        logger: The parent logger. A child logger with the name of the class is created below this.
+        dm (dronemanager.core.DroneManager): The DroneManager instance connected to this plugin.
+        logger (logging.Logger): The parent logger. A child logger with the name of the class is created below this.
         name (str): The name for this instance of the plugin.
         cli_commands (dict[str, Callable]): A dictionary with input strings as keys and the associated coroutines as
           values. The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``.
@@ -44,9 +44,9 @@ class Plugin(ABC):
     """
 
     PREFIX: str = "abc"
-    """PREFIX: (class attribute) The prefix for the CLI commands."""
+    """(class attribute) The prefix for the CLI commands."""
     DEPENDENCIES: list[str] = []
-    """DEPENDENCIES: (class attribute) Other plugins that this plugin depends on."""
+    """(class attribute) Other plugins that this plugin depends on."""
 
     def __init__(self, dm, logger, name, *args, **kwargs):
         self.dm = dm
