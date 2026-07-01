@@ -22,7 +22,7 @@ Sensor Base Class
     Ecowitt
     ^^^^^^^
 
-    .. automodule:: dronemanager.sensors.ecowitt
+..    .. automodule:: dronemanager.sensors.ecowitt
        :members:
        :undoc-members:
        :show-inheritance:

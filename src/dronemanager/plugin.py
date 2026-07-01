@@ -16,25 +16,29 @@ from abc import ABC
 class Plugin(ABC):
     """ Generic plugin class.
 
-    The attribute cli_commands is called by the DroneManager CLI (and could be called by other UIs) to populate their
-    interfaces. This is a dictionary with coroutines as values and human-readable names as keys. In DroneManager
-    the names are used together with the class prefix to determine the command input on the command line, while the
-    signature of the function is used to populate the CLI parser.
-    The attribute background_functions should list coroutines that will run indefinitely, for example those
+    The attribute :py:attr:`cli_commands` is called by the DroneManager CLI (and could be called by other UIs) to
+    populate their interfaces. This is a dictionary with coroutines as values and human-readable names as keys. In
+    DroneManager the names are used together with the class prefix to determine the command input on the command line,
+    while the signature of the function is used to populate the CLI parser.
+    The attribute :py:attr:`background_functions` should list coroutines that will run indefinitely, for example those
     polling for status updates from a camera. They will be started during construction of the class object, usually
     when the module is loaded. Note that these must be coroutines.
+
+    There is a basic dependency structure for plugins. The attribute :py:attr:`~dronemanager.plugin.Plugin.DEPENDENCIES`
+    can be used to list other plugins by their names, on which this plugin depends. These are loaded before this one is.
+    The list supports a single-entry deep dot-notation, i.e. "sensor.ecowitt" specifies that we depend on the ecowitt
+    plugin, which requires the sensor plugin and should be loaded using their loading functions.
 
     A common kwarg is "name", for plugins of which multiple copies may be loaded, in which case the name acts as the
     unique identifier.
 
+    Attributes:
+        PREFIX: (class attribute) The prefix for the CLI commands.
+        DEPENDENCIES: (class attribute) Other plugins that this plugin depends on.
     """
 
     PREFIX = "abc"
-    DEPENDENCIES = []  # Other plugin dependencies, which should be loaded (and are by dronemanager) before this one.
-    # Nested dependencies can also be done with a dot notation, i.e. "mission.uam". The load function of the first
-    # plugin will be used to load the second, i.e. we would load the plugin "mission" and then use the mission.load to
-    # load the subplugin uam.
-    # TODO: Proper dependency management
+    DEPENDENCIES = []
 
     def __init__(self, dm, logger, name, *args, **kwargs):
         self.dm: "dronemanager.dronemanager.DroneManager" = dm
