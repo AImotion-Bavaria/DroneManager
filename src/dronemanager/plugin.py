@@ -5,6 +5,7 @@ their own commands to the CLI.
 """
 import asyncio
 from abc import ABC
+from collections.abc import Coroutine
 
 
 # TODO: Figure out scheduling
@@ -16,28 +17,39 @@ from abc import ABC
 class Plugin(ABC):
     """ Generic plugin class.
 
-    The attribute cli_commands is called by the DroneManager CLI (and could be called by other UIs) to populate their
-    interfaces. This is a dictionary with coroutines as values and human-readable names as keys. In DroneManager
-    the names are used together with the class prefix to determine the command input on the command line, while the
-    signature of the function is used to populate the CLI parser.
-    The attribute background_functions should list coroutines that will run indefinitely, for example those
+    The attribute :py:attr:`cli_commands` is called by the DroneManager CLI (and could be called by other UIs) to
+    populate their interfaces. This is a dictionary with coroutines as values and human-readable names as keys. In
+    DroneManager the names are used together with the class prefix to determine the command input on the command line,
+    while the signature of the function is used to populate the CLI parser.
+    The attribute :py:attr:`background_functions` should list coroutines that will run indefinitely, for example those
     polling for status updates from a camera. They will be started during construction of the class object, usually
     when the module is loaded. Note that these must be coroutines.
+
+    There is a basic dependency structure for plugins. The attribute :py:attr:`~dronemanager.plugin.Plugin.DEPENDENCIES`
+    can be used to list other plugins by their names, on which this plugin depends. These are loaded before this one is.
+    The list supports a single-entry deep dot-notation, i.e. "sensor.ecowitt" specifies that we depend on the ecowitt
+    plugin, which requires the sensor plugin and should be loaded using their loading functions.
 
     A common kwarg is "name", for plugins of which multiple copies may be loaded, in which case the name acts as the
     unique identifier.
 
+    Attributes:
+        dm (dronemanager.core.DroneManager): The DroneManager instance connected to this plugin.
+        logger (logging.Logger): The parent logger. A child logger with the name of the class is created below this.
+        name (str): The name for this instance of the plugin.
+        cli_commands (dict[str, Callable]): A dictionary with input strings as keys and the associated coroutines as
+          values. The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``.
+        background_functions (list[Coroutine]): A list with coroutines which will be launched automatically once the
+          plugin has loaded. These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``.
     """
 
-    PREFIX = "abc"
-    DEPENDENCIES = []  # Other plugin dependencies, which should be loaded (and are by dronemanager) before this one.
-    # Nested dependencies can also be done with a dot notation, i.e. "mission.uam". The load function of the first
-    # plugin will be used to load the second, i.e. we would load the plugin "mission" and then use the mission.load to
-    # load the subplugin uam.
-    # TODO: Proper dependency management
+    PREFIX: str = "abc"
+    """(class attribute) The prefix for the CLI commands."""
+    DEPENDENCIES: list[str] = []
+    """(class attribute) Other plugins that this plugin depends on."""
 
     def __init__(self, dm, logger, name, *args, **kwargs):
-        self.dm: "dronemanager.dronemanager.DroneManager" = dm
+        self.dm = dm
         self.logger = logger.getChild(self.__class__.__name__)
         self.name = name
         self.cli_commands = {}
