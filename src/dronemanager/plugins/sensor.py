@@ -45,7 +45,7 @@ class Sensor(Plugin, abc.ABC):
         await super().start()
 
     async def close(self):
-        """This function must end all running asyncio tasks. By default, all tasks in self._running_tasks are
+        """This function must end all running asyncio tasks. By default, all tasks in self.running_tasks are
         cancelled.
         """
         await self.disconnect()

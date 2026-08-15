@@ -5,7 +5,7 @@ their own commands to the CLI.
 """
 import abc
 import asyncio
-from collections.abc import Coroutine
+from typing import Awaitable, Callable, Coroutine
 import importlib.util
 import inspect
 import pathlib
@@ -14,6 +14,7 @@ import sys
 import dronemanager.core
 from dronemanager.utils import DM_INSTALL_DIR, SRC_DIR, cancel_running_tasks
 
+import logging
 
 # TODO: Figure out scheduling
 #   Have to interact with drone queues ("Move to position X, then turn gimbal, then move to position Y)
@@ -27,9 +28,13 @@ class Plugin(abc.ABC):
     populate their interfaces. This is a dictionary with coroutines as values and human-readable names as keys. In
     DroneManager the names are used together with the class prefix to determine the command input on the command line,
     while the signature of the function is used to populate the CLI parser.
-    The attribute :py:attr:`background_functions` should list coroutines that will run indefinitely, for example those
-    polling for status updates from a camera. They will be started during construction of the class object, usually
-    when the module is loaded. Note that these must be coroutines.
+
+    The attribute :py:attr:`background_functions` should list coroutines that will be launched during initialization
+    and run indefinitely, for example those polling for status updates from a camera. They will be started during
+    construction of the class object, usually when the module is loaded. Note that these must be coroutines.
+
+    The attribute :py:attr:`running_tasks` keeps track of any awaitables, such as tasks, currently running. These are
+    cancelled automatically when the plugin is closed.
 
     There is a basic dependency structure for plugins. The attribute :py:attr:`~dronemanager.plugin.Plugin.DEPENDENCIES`
     can be used to list other plugins by their names, on which this plugin depends. These are loaded before this one is.
@@ -40,13 +45,14 @@ class Plugin(abc.ABC):
     unique identifier.
 
     Attributes:
-        dm (dronemanager.core.DroneManager): The DroneManager instance connected to this plugin.
-        logger (logging.Logger): The parent logger. A child logger with the name of the class is created below this.
-        name (str): The name for this instance of the plugin.
-        cli_commands (dict[str, Callable]): A dictionary with input strings as keys and the associated coroutines as
+        dm: The DroneManager instance connected to this plugin.
+        logger: The parent logger. A child logger with the name of the class is created below this.
+        name: The name for this instance of the plugin.
+        cli_commands: A dictionary with input strings as keys and the associated coroutines as
           values. The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``.
-        background_functions (list[Coroutine]): A list with coroutines which will be launched automatically once the
+        background_functions: A list with coroutines which will be launched automatically once the
           plugin has loaded. These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``.
+        running_tasks: A set of awaitables currently running. These are automatically cancelled if the plugin is closed.
     """
 
     PREFIX: str = "abc"
@@ -54,24 +60,31 @@ class Plugin(abc.ABC):
     DEPENDENCIES: list[str] = []
     """(class attribute) Other plugins that this plugin depends on."""
 
-    def __init__(self, dm, logger, name, *args, **kwargs):
-        self.dm = dm
-        self.logger = logger.getChild(self.__class__.__name__)
-        self.name = name
-        self.cli_commands = {}
-        self.background_functions = []
-        self.running_tasks = set()
+    def __init__(self, dm: "dronemanager.core.DroneManager", logger: logging.Logger, name: str, *args, **kwargs):
+        self.dm: "dronemanager.core.DroneManager" = dm
+        self.logger: logging.Logger = logger.getChild(self.__class__.__name__)
+        self.name: str = name
+        self.cli_commands: dict[str, Callable] = {}
+        self.background_functions: list[Coroutine] = []
+        self.running_tasks: set[Awaitable] = set()
 
     def start_background_functions(self):
+        """Starts declared background functions and tracks them."""
         for coro in self.background_functions:
             self.running_tasks.add(asyncio.create_task(coro))
 
     async def start(self):
-        """Starts any background functions."""
+        """Starts the plug.
+
+        By default, only starts declared background functions.
+        """
         self.start_background_functions()
 
     async def close(self):
-        """Ends all running tasks functions."""
+        """Close the plugin.
+
+        By default, stops any running functions
+        """
         cancel_running_tasks(self.running_tasks)
 
 

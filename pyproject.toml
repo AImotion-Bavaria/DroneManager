@@ -46,22 +46,48 @@ docs = [
 tests = [
     "pytest",
     "pytest-asyncio",
+    "pytest-cov",
     "flake8",
     "flake8-pyproject",
+    "flake8-annotations",
     "pydoclint[flake8]",
-    "ruff"
+    "ruff",
 ]
 
 [tool.setuptools.package-data]
 dronemanager = ["resources/*"]
 
+### Testing configuration ###
+
 [tool.pytest.ini_options]
-addopts = ["--import-mode=importlib"]
+addopts = [
+    "--import-mode=importlib",
+    "--cov=dronemanager",
+    "--cov-report=term-missing"
+]
 asyncio_mode = "auto"
+
+[tool.coverage.report]
+omit = [
+    "src/dronemanager/plugins/NatNet/*"
+]
+fail_under = 80
 
 [tool.flake8]
 max-line-length = 120
 style = "google"
+ignore = [
+    "ANN002",
+    "ANN003",
+    "ANN101",
+    "ANN102",
+    "DOC602",
+    "DOC603",
+]
+arg-type-hints-in-docstring = false
+check-return-types = false
+skip-checking-short-docstrings = false
+suppress-none-returning = true
 
 [tool.ruff]
 extend-exclude = [
@@ -70,6 +96,7 @@ extend-exclude = [
 
 [tool.ruff.lint]
 select = ["D", ]
+ignore = ["D107",]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

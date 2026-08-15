@@ -43,7 +43,7 @@ class Mission(Plugin, abc.ABC):
     async def close(self):
         """Shutdown function for the script. It should end any running tasks and clear any resources.
 
-        By default, it cancels any tasks tracked in self._running_tasks.
+        By default, it cancels any tasks tracked in self.running_tasks.
         """
         await super().close()
 

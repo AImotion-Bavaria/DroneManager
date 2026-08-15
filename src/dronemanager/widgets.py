@@ -3,9 +3,10 @@ import math
 import queue
 from queue import Queue
 import argparse
+from logging import LogRecord
 
 from textual.widgets import Input, Log, Static
-from dronemanager.drone import FlightMode, FixType
+from dronemanager.drone import FlightMode, FixType, Drone
 from textual.binding import Binding
 from rich.text import Text
 
@@ -147,36 +148,71 @@ class InputWithHistory(Input):
 
 
 class DroneOverview(Static):
+    """Widget to show key values for a drones.
 
-    COLUMN_NAMES = ["Name", "Status", "Modes", "GPS", "Local", "Vel", "Yaw/Bat"]
-    COLUMN_WIDTHS = [10, 11, 11, 16, 9, 9, 8]
-    COLUMN_ALIGN = ["<", ">", ">", ">", ">", ">", ">"]
-    COLUMN_SPACING = 3
+    Args:
+        drone: Dummy text
+        update_frequency: Dummy text
+        logger: Dummy text
+        *args: Passthrough to textual Static class.
+        **kwargs: Passthrough to textual Static class.
 
-    def __init__(self, drone, update_frequency, logger, *args, **kwargs):
+    Attributes:
+        drone: Dummy text
+        update_frequency: Dummy text
+        logger: Dummy text
+        column_formats: Dummy text
+        spacer: Dummy text
+        format_string: Dummy text
+    """
+
+    COLUMN_NAMES: list[str] = ["Name", "Status", "Modes", "GPS", "Local", "Vel", "Yaw/Bat"]
+    """(class attribute) The names for each column of the overview."""
+
+    COLUMN_WIDTHS: list[int] = [10, 11, 11, 16, 9, 9, 8]
+    """(class attribute) The target widths for each column. Shorter strings are padded, longer ones truncated."""
+
+    COLUMN_ALIGN: list[str] = ["<", ">", ">", ">", ">", ">", ">"]
+    """(class attribute) The alignment strings for each column."""
+
+    COLUMN_SPACING: int = 3
+    """(class attribute) The spacing between columns."""
+
+    def __init__(self, drone: Drone, update_frequency: float, logger: logging.Logger, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.drone = drone
-        self.update_frequency = update_frequency
-        self.logger = logger
-        self.column_formats = [f"{{:{self.COLUMN_ALIGN[i]}{self.COLUMN_WIDTHS[i]}}}"
-                               for i in range(len(self.COLUMN_NAMES))]
-        self.spacer = " "*self.COLUMN_SPACING
-        self.format_string = self.spacer.join(self.column_formats)
+        self.drone: Drone = drone
+        self.update_frequency: float = update_frequency
+        self.logger: logging.Logger = logger
+        self.column_formats: list[str] = [f"{{:{self.COLUMN_ALIGN[i]}{self.COLUMN_WIDTHS[i]}}}"
+                                          for i in range(len(self.COLUMN_NAMES))]
+        self.spacer: str = " " * self.COLUMN_SPACING
+        self.format_string: str = self.spacer.join(self.column_formats)
 
     @classmethod
-    def header_string(cls):
-        return (" "*cls.COLUMN_SPACING).join([f"{cls.COLUMN_NAMES[i]:{cls.COLUMN_ALIGN[i]}{cls.COLUMN_WIDTHS[i]}}"
-                                              for i
-                                              in range(len(cls.COLUMN_NAMES))])
+    def header_string(cls) -> str:
+        """Creates the header string for the drone overview, with appropriate spacing.
+
+        Returns:
+            The header string.
+        """
+        return (" " * cls.COLUMN_SPACING).join([f"{cls.COLUMN_NAMES[i]:{cls.COLUMN_ALIGN[i]}{cls.COLUMN_WIDTHS[i]}}"
+                                                for i
+                                                in range(len(cls.COLUMN_NAMES))])
 
     @classmethod
-    def gadget_width(cls):
-        return (len(cls.COLUMN_NAMES)-1)*cls.COLUMN_SPACING + sum(cls.COLUMN_WIDTHS)
+    def gadget_width(cls) -> int:
+        """Get the width of this widget, for calculating screen sizes.
 
-    def on_mount(self) -> None:
+        Returns:
+            The width of this widget.
+        """
+        return (len(cls.COLUMN_NAMES) - 1) * cls.COLUMN_SPACING + sum(cls.COLUMN_WIDTHS)
+
+    def on_mount(self):
+        """Called when the widget is created, starts the update function."""
         asyncio.create_task(self.update_display())
 
-    def _text_name(self):
+    def _text_name(self) -> Text:
         if len(self.drone.name) > self.COLUMN_WIDTHS[0]:
             display_name = self.drone.name[:(self.COLUMN_WIDTHS[0]-3)] + "..."
         else:
@@ -184,21 +220,21 @@ class DroneOverview(Static):
         string = self.column_formats[0].format(display_name)
         return Text(string, style="bold")
 
-    def _text_empty(self, column):
+    def _text_empty(self, column: int) -> Text:
         string = self.column_formats[column].format("")
         return Text(string, style="bold")
 
-    def _text_connect(self):
+    def _text_connect(self) -> Text:
         color = "green" if self.drone.is_connected else "red"
         string = self.column_formats[1].format(f"Conn: {str(self.drone.is_connected):>{self.COLUMN_WIDTHS[1]-6}}")
         return Text(string, style=f"bold {color}")
 
-    def _text_flightmode(self):
+    def _text_flightmode(self) -> Text:
         color = "green" if self.drone.flightmode == FlightMode.OFFBOARD else "red"
         string = self.column_formats[2].format(str(self.drone.flightmode.name))
         return Text(string, style=f"bold {color}")
 
-    def _text_fixtype(self):
+    def _text_fixtype(self) -> Text:
         color = "yellow"
         if self.drone.fix_type == FixType.NO_FIX:
             color = "red"
@@ -207,57 +243,57 @@ class DroneOverview(Static):
         string = self.column_formats[2].format(str(self.drone.fix_type.name))
         return Text(string, style=f"bold {color}")
 
-    def _text_armed(self):
+    def _text_armed(self) -> Text:
         color = "green" if self.drone.is_armed else "yellow"
         string = self.column_formats[1].format(f"Arm: {str(self.drone.is_armed):>{self.COLUMN_WIDTHS[1]-5}}")
         return Text(string, style=f"bold {color}")
 
-    def _text_airborne(self):
+    def _text_airborne(self) -> Text:
         color = "green" if self.drone.in_air else "yellow"
         string = self.column_formats[1].format(f"Air: {str(self.drone.in_air):>{self.COLUMN_WIDTHS[1]-5}}")
         return Text(string, style=f"bold {color}")
 
-    def _text_lat(self):
+    def _text_lat(self) -> Text:
         string = self.column_formats[3].format(f"LAT: {self.drone.position_global[0]:{self.COLUMN_WIDTHS[3]-6}.6f}")
         return Text(string, style="bold")
 
-    def _text_long(self):
+    def _text_long(self) -> Text:
         string = self.column_formats[3].format(f"LONG: {self.drone.position_global[1]:{self.COLUMN_WIDTHS[3] - 6}.6f}")
         return Text(string, style="bold")
 
-    def _text_amsl(self):
+    def _text_amsl(self) -> Text:
         string = self.column_formats[3].format(f"AMSL: {self.drone.position_global[2]:{self.COLUMN_WIDTHS[3] - 6}.2f}")
         return Text(string, style="bold")
 
-    def _text_p_north(self):
+    def _text_p_north(self) -> Text:
         string = self.column_formats[4].format(f"N: {self.drone.position_ned[0]:{self.COLUMN_WIDTHS[4]-3}.3f}")
         return Text(string, style="bold")
 
-    def _text_p_east(self):
+    def _text_p_east(self) -> Text:
         string = self.column_formats[4].format(f"E: {self.drone.position_ned[1]:{self.COLUMN_WIDTHS[4]-3}.3f}")
         return Text(string, style="bold")
 
-    def _text_p_down(self):
+    def _text_p_down(self) -> Text:
         string = self.column_formats[4].format(f"D: {self.drone.position_ned[2]:{self.COLUMN_WIDTHS[4]-3}.3f}")
         return Text(string, style="bold")
 
-    def _text_v_north(self):
+    def _text_v_north(self) -> Text:
         string = self.column_formats[5].format(f"N: {self.drone.velocity[0]:{self.COLUMN_WIDTHS[5]-3}.3f}")
         return Text(string, style="bold")
 
-    def _text_v_east(self):
+    def _text_v_east(self) -> Text:
         string = self.column_formats[5].format(f"E: {self.drone.velocity[1]:{self.COLUMN_WIDTHS[5]-3}.3f}")
         return Text(string, style="bold")
 
-    def _text_v_down(self):
+    def _text_v_down(self) -> Text:
         string = self.column_formats[5].format(f"D: {self.drone.velocity[2]:{self.COLUMN_WIDTHS[5]-3}.3f}")
         return Text(string, style="bold")
 
-    def _text_yaw(self):
+    def _text_yaw(self) -> Text:
         string = self.column_formats[6].format(f"Y: {self.drone.attitude[2]:{self.COLUMN_WIDTHS[6]-3}.1f}")
         return Text(string, style="bold")
 
-    def _text_bat_remain(self):
+    def _text_bat_remain(self) -> Text:
         color = "white"
         battery_remaining = math.nan
         try:
@@ -273,7 +309,7 @@ class DroneOverview(Static):
         string = self.column_formats[6].format(f"{battery_remaining:{self.COLUMN_WIDTHS[6]-1}.0f}%")
         return Text(string, style=f"bold {color}")
 
-    def _text_bat_volt(self):
+    def _text_bat_volt(self) -> Text:
         battery_voltage = math.nan
         try:
             battery_voltage = self.drone.batteries[0].voltage
@@ -283,6 +319,10 @@ class DroneOverview(Static):
         return Text(string, style="bold")
 
     async def update_display(self):
+        """Update the overview screen with current information.
+
+        Continuously updates the screen with the frequency set by :py:attr:`update_frequency`.
+        """
         while True:
             try:
                 text_output = Text.assemble(self._text_empty(0), self.spacer,
@@ -327,9 +367,9 @@ class TextualLogHandler(logging.Handler):
         super().__init__(*args, **kwargs)
         self.log_textual: Log = log_textual  #: The textual Log object to which we write.
         self._maxsize: int = 10000
-        self._queue: Queue[logging.LogRecord] = Queue(self._maxsize)
+        self._queue: Queue[LogRecord] = Queue(self._maxsize)
 
-    def emit(self, record: logging.LogRecord):
+    def emit(self, record: LogRecord):
         """Write the log record to the textual log pane.
 
         Args:
