@@ -51,50 +51,64 @@ html_static_path = ['_static']
 autosummary_generate = False
 
 
-from typing import ClassVar, get_origin
+import importlib
+from typing import ClassVar, get_origin, get_type_hints
 
 
-_current_class = None
-_instance_attributes = {}
+def _find_owner_class(qualified_name: str):
+    """Find the class owning a fully qualified Sphinx member name."""
+    parts = qualified_name.split(".")
+
+    for i in range(len(parts) - 1, 0, -1):
+        module_name = ".".join(parts[:i])
+
+        try:
+            obj = importlib.import_module(module_name)
+        except ImportError:
+            continue
+
+        try:
+            for part in parts[i:-1]:
+                obj = getattr(obj, part)
+        except AttributeError:
+            continue
+
+        if isinstance(obj, type):
+            return obj
+
+    return None
 
 
-def _is_classvar(annotation):
-    """Return whether an annotation is a ClassVar."""
-    return get_origin(annotation) is ClassVar
+def _is_instance_attribute(cls: type, name: str) -> bool:
+    """Return whether a class annotation describes an instance attribute."""
+    for base in cls.__mro__:
+        annotations = getattr(base, "__annotations__", {})
+
+        if name not in annotations:
+            continue
+
+        try:
+            annotation = get_type_hints(base, include_extras=True).get(name)
+        except (NameError, TypeError):
+            annotation = annotations[name]
+
+        return get_origin(annotation) is not ClassVar
+
+    return False
 
 
-def _process_class_docstring(app, what, name, obj, options, lines):
-    """Record instance attributes declared by each class."""
-    global _current_class
-
-    if what != "class":
-        return
-
-    _current_class = obj
-
-    annotations = getattr(obj, "__annotations__", {})
-
-    _instance_attributes[id(obj)] = {
-        attribute_name
-        for attribute_name, annotation in annotations.items()
-        if not _is_classvar(annotation)
-    }
-
-
-def _skip_instance_attribute(app, what, name, obj, skip, options):
-    """Skip annotated instance attributes from autodoc."""
+def skip_instance_attributes(app, what, name, obj, skip, options):
+    """Prevent autodoc from duplicating documented instance attributes."""
     if what != "attribute":
         return skip
 
-    if _current_class is None:
-        return skip
+    owner = _find_owner_class(name)
 
-    if name in _instance_attributes.get(id(_current_class), set()):
+    if owner is not None and _is_instance_attribute(owner, name.rsplit(".", 1)[-1]):
         return True
 
     return skip
 
 
 def setup(app):
-    app.connect("autodoc-process-docstring", _process_class_docstring)
-    app.connect("autodoc-skip-member", _skip_instance_attribute)
+    app.connect("autodoc-skip-member", skip_instance_attributes)
