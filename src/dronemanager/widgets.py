@@ -174,14 +174,14 @@ class DroneOverview(Static):
             **kwargs: Passthrough.
         """
         super().__init__(*args, **kwargs)
-        self.drone: Drone = drone  # The drone which this overview is showing
-        self.update_frequency: float = update_frequency  # How often this widget updates
-        self.logger: logging.Logger = logger  # The logger for errors
+        self.drone: Drone = drone  #: The drone which this overview is showing
+        self.update_frequency: float = update_frequency  #: How often this widget updates
+        self.logger: logging.Logger = logger  #: The logger for errors
+        #: A list of format strings for each column
         self.column_formats: list[str] = [f"{{:{self.COLUMN_ALIGN[i]}{self.COLUMN_WIDTHS[i]}}}"
                                           for i in range(len(self.COLUMN_NAMES))]
-        # A list of format strings for each column
-        self.spacer: str = " " * self.COLUMN_SPACING  # Spacing string
-        self.format_string: str = self.spacer.join(self.column_formats)  # The full formatted string to be filled.
+        self.spacer: str = " " * self.COLUMN_SPACING  #: Spacing string
+        self.format_string: str = self.spacer.join(self.column_formats)  #: The full formatted string to be filled.
 
     @classmethod
     def header_string(cls) -> str:
