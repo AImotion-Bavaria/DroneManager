@@ -77,7 +77,7 @@ fail_under = 80
 [tool.flake8]
 max-line-length = 120
 style = "google"
-ignore = [
+extend-ignore = [
     "ANN002",
     "ANN003",
     "ANN101",
@@ -85,6 +85,9 @@ ignore = [
     "DOC607",
 #    "DOC602",
 #    "DOC603",
+]
+extend-exclude = [
+    "src/dronemanager/plugins/NatNet/*",
 ]
 arg-type-hints-in-docstring = false
 check-return-types = false
