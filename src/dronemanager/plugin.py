@@ -43,16 +43,6 @@ class Plugin(abc.ABC):
 
     A common kwarg is "name", for plugins of which multiple copies may be loaded, in which case the name acts as the
     unique identifier.
-
-    Attributes:
-        dm: The DroneManager instance connected to this plugin.
-        logger: The parent logger. A child logger with the name of the class is created below this.
-        name: The name for this instance of the plugin.
-        cli_commands: A dictionary with input strings as keys and the associated coroutines as
-          values. The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``.
-        background_functions: A list with coroutines which will be launched automatically once the
-          plugin has loaded. These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``.
-        running_tasks: A set of awaitables currently running. These are automatically cancelled if the plugin is closed.
     """
 
     PREFIX: str = "abc"
@@ -61,12 +51,29 @@ class Plugin(abc.ABC):
     """(class attribute) Other plugins that this plugin depends on."""
 
     def __init__(self, dm: "dronemanager.core.DroneManager", logger: logging.Logger, name: str, *args, **kwargs):
+        """
+
+        Args:
+            dm:
+            logger:
+            name:
+            *args:
+            **kwargs:
+        """
         self.dm: "dronemanager.core.DroneManager" = dm
+        """The DroneManager instance connected to this plugin."""
         self.logger: logging.Logger = logger.getChild(self.__class__.__name__)
+        """The parent logger. A child logger with the name of the class is created below this."""
         self.name: str = name
+        """The name for this instance of the plugin."""
         self.cli_commands: dict[str, Callable] = {}
+        """A dictionary with input strings as keys and the associated coroutines as
+           values. The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``."""
         self.background_functions: list[Coroutine] = []
+        """A list with coroutines which will be launched automatically once the
+           plugin has loaded. These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``."""
         self.running_tasks: set[Awaitable] = set()
+        """A set of awaitables currently running. These are automatically cancelled if the plugin is closed."""
 
     def start_background_functions(self):
         """Starts declared background functions and tracks them."""
