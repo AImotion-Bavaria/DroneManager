@@ -42,6 +42,7 @@ dm = "dronemanager.app:main"
 docs = [
     "sphinx",
     "sphinx_rtd_theme",
+    "sphinx-autodoc-typehints",
 ]
 tests = [
     "pytest",
