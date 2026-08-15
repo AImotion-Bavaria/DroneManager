@@ -9,33 +9,34 @@
 project = 'DroneManager'
 copyright = '2025, Dominik Mattern, Konstantin Bake'
 author = 'Dominik Mattern, Konstantin Bake'
-release = '0.3'
+release = '0.6'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
     'sphinx.ext.autodoc',
-    'sphinx.ext.autosummary',
     'sphinx.ext.intersphinx',
     'sphinx.ext.napoleon',
+    'sphinx_autodoc_typehints',
     'sphinx_rtd_theme',
 ]
 autodoc_mock_imports = []  # "mujoco"
 autodoc_member_order = 'bysource'
 # autodoc_class_signature = 'separated' # Moves the class signatures into separate init function docu.
-numpydoc_class_members_toctree = False
+#numpydoc_class_members_toctree = False
 automodapi_toctreedirnm = 'generated'
 automodsumm_inherited_members = True
 autodoc_preserve_defaults = True
 autoclass_content = 'class'
 
 napoleon_google_docstring = True
-napoleon_use_ivar = False
+napoleon_use_rtype = False
+typehints_use_rtype = False
+autodoc_typehints = "none"
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
-
 
 source_suffix = {'.rst': 'restructuredtext'}
 

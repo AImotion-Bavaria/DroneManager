@@ -15,5 +15,4 @@ Custom widgets
 
 .. automodule:: dronemanager.widgets
    :members:
-   :undoc-members:
    :show-inheritance:
