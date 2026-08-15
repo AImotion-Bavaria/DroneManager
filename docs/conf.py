@@ -18,7 +18,6 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.intersphinx',
     'sphinx.ext.napoleon',
-    'sphinx_autodoc_typehints',
     'sphinx_rtd_theme',
 ]
 autodoc_mock_imports = []  # "mujoco"
@@ -30,13 +29,6 @@ automodsumm_inherited_members = True
 autodoc_preserve_defaults = True
 autoclass_content = 'class'
 napoleon_google_docstring = True
-napoleon_use_rtype = False
-typehints_use_rtype = False
-autodoc_typehints = "none"
-
-suppress_warnings = [
-    "sphinx_autodoc_typehints.forward_reference",
-]
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
