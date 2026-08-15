@@ -10,26 +10,46 @@ from textual.widgets import Input, Log, Static
 from dronemanager.drone import FlightMode, FixType, Drone
 from textual.binding import Binding
 from rich.text import Text
+from typing import IO
 
 import logging
 
 
 class ArgumentParserError(Exception):
+    """Special exception class for errors not otherwise covered."""
     pass
 
 
 # Dummy error to stop parsing
 class PrintHelpInsteadOfParsingError(Exception):
+    """Dummy exception to stop argument parsing when help is printed."""
     pass
 
 
 class ArgParser(argparse.ArgumentParser):
+    """Adjusted ArgumentParser that raises Exceptions instead of calling sys.exit."""
 
-    def __init__(self, *args, logger=None, **kwargs):
-        self.logger = logger
+    def __init__(self, *args, logger: logging.Logger = None, **kwargs):
+        """Create ArgParser.
+
+        Args:
+            *args: Passed to base class.
+            logger: The logger used for parsing errors and help output.
+            **kwargs: Passed to base class.
+        """
+        self.logger: logging.Logger = logger  #: The logger used for parsing errors and help output.
         super().__init__(*args, **kwargs)
 
-    def error(self, message):
+    def error(self, message: str):
+        """Changed default behaviour to raise Exceptions instead of calling sys.exit.
+
+        Args:
+            message: The error message.
+
+        Raises:
+            ValueError: Raised with a number of invalid-input-type errors.
+            ArgumentParserError: Fallback for other types of argparse exceptions.
+        """
         if "invalid choice" in message:
             raise ValueError(message)
         elif "arguments are required" in message:
@@ -41,13 +61,23 @@ class ArgParser(argparse.ArgumentParser):
         else:
             raise ArgumentParserError(message)
 
-    def print_help(self, file=None):
+    def print_help(self, file: IO[str] | None = None):
+        """Print help function that stops parsing after the help is printed.
+
+        This prevents partially parsed arguments from being executed after the help string is printed.
+
+        Args:
+            file: Where to print the help.
+
+        Raises:
+            PrintHelpInsteadOfParsingError: Dummy exception to stop parsing on help.
+        """
         if file is None:
             file = (self.logger, logging.INFO)
         self._print_message(self.format_help(), file)
         raise PrintHelpInsteadOfParsingError()
 
-    def _print_message(self, message, file=None):
+    def _print_message(self, message: str, file: IO[str] | None = None):
         if message:
             file = file or (self.logger, logging.ERROR)
             try:
@@ -58,7 +88,16 @@ class ArgParser(argparse.ArgumentParser):
             except (AttributeError, OSError):
                 pass
 
-    def exit(self, status=0, message=None):
+    def exit(self, status: int = 0, message: str = None):
+        """Changes the exit behaviour of the ArgumentParser to not call sys.exit().
+
+        Args:
+            status: Status code.
+            message: Exit message.
+
+        Raises:
+            ArgumentParserError: Raised when this function is called with a non-zero status code.
+        """
         if status != 0:
             raise ArgumentParserError(message)
         else:
@@ -66,35 +105,42 @@ class ArgParser(argparse.ArgumentParser):
 
 
 class InputWithHistory(Input):
+    """Input widget with a traversable history.
+
+    The history has a maximum size set by :py:attr:`history_max_length` and can be traversed using the arrow up and
+    down keys. If new entries are added after the maximum history size is reached, old entries are overwritten using
+    a rolling zero-index mechanism.
+    """
 
     BINDINGS = Input.BINDINGS.copy()
+    """Key bindings for the input field.
+
+    Compared to standard textual input, arrow up selects the previous item in the history, arrow down selects the next.
+
+    :meta hide-value:"""
     BINDINGS.append(Binding("up", "history_prev", "Previous item from history", show=False))
     BINDINGS.append(Binding("down", "history_rec", "Next item in history", show=False))
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.history = []
-        self.history_cursor = -1     # Shows where in the history we are
-        self.rolling_zero = 0       # Current "0" index. If we had more entries, these get overwritten.
-        self.history_max_length = 50
-        self._submitted_historical = False
+    def __init__(self, *args: any, **kwargs: any):
+        """Create the widget.
 
-    # Behaviour: Depends on if we are already using history.
-    # A new submission is added to the history
-    # Up then goes back into the history
-    # Down does nothing
-    # But: if we submit a history entry (i.e. go back and do not change)
-    # Up displays the same entry (from the history)
-    # Down shows the next entry in the history.
-    # i.e. submit "a", up -> "a", down -> nothing
-    # submit "a", submit "b", submit "c", up -> "c", up ->"b", submit "b", [up -> "b", down ->"c"]
+        Args:
+            *args: Passed to the base class.
+            **kwargs: Passed to the base class.
+        """
+        super().__init__(*args, **kwargs)
+        self._history: list[str] = []  #: The history list
+        self.history_cursor: int = -1  #: Shows where in the history we are.
+        self.rolling_zero: int = 0  #: The current position of the "zeroth" entry in the list.
+        self.history_max_length: int = 50  #: The maximum size of the history.
+        self._submitted_historical = False  #: Whether the last submitted entry came from the history.
 
     @property
-    def _current_history_cursor(self):
-        return (self.rolling_zero - (self.history_cursor+1)) % min(len(self.history), self.history_max_length)
+    def _current_history_cursor(self) -> int:
+        return (self.rolling_zero - (self.history_cursor + 1)) % min(len(self._history), self.history_max_length)
 
     def _increase_history_cursor(self):
-        if self.history_cursor < self.history_max_length - 1 and self.history_cursor < len(self.history)-1:
+        if self.history_cursor < self.history_max_length - 1 and self.history_cursor < len(self._history) - 1:
             self.history_cursor += 1
 
     def _decrease_history_cursor(self):
@@ -104,14 +150,19 @@ class InputWithHistory(Input):
     def _increase_history_rolling_pos(self):
         self.rolling_zero = (self.rolling_zero + 1) % self.history_max_length
 
-    def action_history_prev(self) -> None:
-        if self.history:
+    def action_history_prev(self):
+        """Moves the history cursor backwards."""
+        if self._history:
             self._submitted_historical = False
             self._increase_history_cursor()
-            self.value = self.history[self._current_history_cursor]
+            self.value = self._history[self._current_history_cursor]
 
-    def action_history_rec(self) -> None:
-        if self.history:
+    def action_history_rec(self):
+        """Moves the history cursor forwards.
+
+        If we have reached the end of the history, clears the field.
+        """
+        if self._history:
             if not self._submitted_historical:
                 self._decrease_history_cursor()
             else:
@@ -119,26 +170,39 @@ class InputWithHistory(Input):
             if self.history_cursor == -1:
                 self.value = ""
             else:
-                self.value = self.history[self._current_history_cursor]
+                self.value = self._history[self._current_history_cursor]
         else:
             self.value = ""
 
-    def add_to_history(self, item) -> None:
+    def add_to_history(self, item: str):
+        """Add an item to the history.
+
+        If the history is full, the item at the current rolling zero position is overwritten. Otherwise, it is simply
+        appended.
+
+        Args:
+            item: The new item.
+        """
         # If we add extra entries, overwrite old ones
-        if len(self.history) == self.history_max_length:
+        if len(self._history) == self.history_max_length:
             # Entry to be overridden is at rolling_zero
-            self.history[self.rolling_zero] = item
+            self._history[self.rolling_zero] = item
             self._increase_history_rolling_pos()
         else:
-            self.history.append(item)
+            self._history.append(item)
 
-    async def action_submit(self) -> None:
+    async def action_submit(self):
+        """Handle a submit action.
+
+        Triggered when the user hits enter while the input field is active. Compared to the base class, this also
+        adds the input field to the history.
+        """
         submitted_value = self.value
         await super().action_submit()  # Submit the action
         # If we are at some point in our input history and the submission is identical to that history, keep our
         # position in the history. When pressing up we get the same command again, but pressing down gets us the next
         # command in the sequence, rather than two without this special behaviour.
-        if self.history_cursor != -1 and submitted_value == self.history[self._current_history_cursor]:
+        if self.history_cursor != -1 and submitted_value == self._history[self._current_history_cursor]:
             self.add_to_history(submitted_value)  # Store the action in the history
             self._submitted_historical = True
         # Otherwise reset our position in the history
@@ -167,11 +231,11 @@ class DroneOverview(Static):
         """Create DroneOverview.
 
         Args:
-            drone: Dummy drone.
-            update_frequency: dummy update_freq.
-            logger: Dummy logger.
-            *args: Passthrough.
-            **kwargs: Passthrough.
+            drone: The drone whose info this overview should show.
+            update_frequency: How often this widget updates.
+            logger: The logger for errors.
+            *args: Passed to the base class.
+            **kwargs: Passed to the base class.
         """
         super().__init__(*args, **kwargs)
         self.drone: Drone = drone  #: The drone which this overview is showing
