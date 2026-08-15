@@ -360,7 +360,7 @@ class TextualLogHandler(logging.Handler):
     def __init__(self, log_textual: Log, *args, **kwargs):
         """Create TextualLogHandler.
 
-        Args:
+        Parameters:
             log_textual: The textual Log object to which we write.
             *args: Passthrough to logging Handler class.
             **kwargs: Passthrough to logging Handler class.
