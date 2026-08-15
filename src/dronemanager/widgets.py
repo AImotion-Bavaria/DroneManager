@@ -148,16 +148,7 @@ class InputWithHistory(Input):
 
 
 class DroneOverview(Static):
-    """Widget to show key values for a drones.
-
-    Attributes:
-        drone: Dummy text
-        update_frequency: Dummy text
-        logger: Dummy text
-        column_formats: Dummy text
-        spacer: Dummy text
-        format_string: Dummy text
-    """
+    """Widget to show key values for a drones."""
 
     COLUMN_NAMES: list[str] = ["Name", "Status", "Modes", "GPS", "Local", "Vel", "Yaw/Bat"]
     """(class attribute) The names for each column of the overview."""
@@ -182,6 +173,7 @@ class DroneOverview(Static):
         """
         super().__init__(*args, **kwargs)
         self.drone: Drone = drone
+        """Dummy text."""
         self.update_frequency: float = update_frequency
         self.logger: logging.Logger = logger
         self.column_formats: list[str] = [f"{{:{self.COLUMN_ALIGN[i]}{self.COLUMN_WIDTHS[i]}}}"
@@ -360,7 +352,7 @@ class TextualLogHandler(logging.Handler):
     def __init__(self, log_textual: Log, *args, **kwargs):
         """Create TextualLogHandler.
 
-        Parameters:
+        Args:
             log_textual: The textual Log object to which we write.
             *args: Passthrough to logging Handler class.
             **kwargs: Passthrough to logging Handler class.

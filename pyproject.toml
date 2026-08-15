@@ -88,8 +88,10 @@ arg-type-hints-in-docstring = false
 check-return-types = false
 skip-checking-short-docstrings = false
 suppress-none-returning = true
-only-attrs-with-ClassVar-are-treated-as-class-attrs = true
 allow-init-docstring = true
+
+only-attrs-with-ClassVar-are-treated-as-class-attrs = true
+require-inline-class-var-docs = true
 
 [tool.ruff]
 extend-exclude = [

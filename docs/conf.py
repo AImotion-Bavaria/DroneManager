@@ -31,7 +31,6 @@ autodoc_preserve_defaults = True
 autoclass_content = 'class'
 
 napoleon_google_docstring = True
-#napoleon_use_ivar = True
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
