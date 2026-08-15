@@ -5,16 +5,16 @@ their own commands to the CLI.
 """
 import abc
 import asyncio
-from typing import Awaitable, Callable, Coroutine
 import importlib.util
 import inspect
+import logging
 import pathlib
 import sys
+from typing import Awaitable, Callable, Coroutine
 
 import dronemanager.core
 from dronemanager.utils import DM_INSTALL_DIR, SRC_DIR, cancel_running_tasks
 
-import logging
 
 # TODO: Figure out scheduling
 #   Have to interact with drone queues ("Move to position X, then turn gimbal, then move to position Y)

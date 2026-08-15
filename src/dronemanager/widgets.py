@@ -174,18 +174,12 @@ class DroneOverview(Static):
         """
         super().__init__(*args, **kwargs)
         self.drone: Drone = drone
-        """Dummy text."""
         self.update_frequency: float = update_frequency
-        """Dummy text."""
         self.logger: logging.Logger = logger
-        """Dummy text."""
         self.column_formats: list[str] = [f"{{:{self.COLUMN_ALIGN[i]}{self.COLUMN_WIDTHS[i]}}}"
                                           for i in range(len(self.COLUMN_NAMES))]
-        """Dummy text."""
         self.spacer: str = " " * self.COLUMN_SPACING
-        """Dummy text."""
         self.format_string: str = self.spacer.join(self.column_formats)
-        """Dummy text."""
 
     @classmethod
     def header_string(cls) -> str:

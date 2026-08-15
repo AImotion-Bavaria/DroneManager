@@ -17,7 +17,11 @@ classes. There can one plugin per module. The name of the module defines the nam
 they additionally provide a prefix, which is prepended to the commands to prevent collisions, i.e. multiple plugins can
 have a ``connect`` command. For plugin ``abc``, this command becomes ``abc-connect``.
 
-There are two special types of plugins: :doc:`Missions <mission>` and :doc:`Sensors <sensor>`.
+In addition, there is a special type of plugin, :py:class:`~dronemanager.plugin.MetaPlugin` which allows for defining
+a specialised plugin type. These live in separate folders in the source directory, and also have corresponding folders
+in the install directory. Modules dropped into these directory and meeting the usual requirements for plugins can
+also be loaded at runtime. There are three special types of these plugins already implemented:
+:doc:`Missions <mission>`, :doc:`Sensors <sensor>` and core plugins themselves.
 
 
 Plugin Base Class
