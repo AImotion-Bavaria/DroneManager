@@ -354,7 +354,10 @@ class DroneOverview(Static):
 
 
 class TextualLogHandler(logging.Handler):
-    """Logging Handler for textual log objects."""
+    """Logging Handler for textual log objects.
+
+    Works using a queue, so that various threads can safely make log calls without breaking the UI thread.
+    """
     def __init__(self, log_textual: Log, *args, **kwargs):
         """Create TextualLogHandler.
 
@@ -365,8 +368,8 @@ class TextualLogHandler(logging.Handler):
         """
         super().__init__(*args, **kwargs)
         self.log_textual: Log = log_textual  #: The textual Log object to which we write.
-        self._maxsize: int = 10000
-        self._queue: Queue[LogRecord] = Queue(self._maxsize)
+        self._maxsize: int = 10000  #: The maximum size of the log record queue
+        self._queue: Queue[LogRecord] = Queue(self._maxsize)  #: The queue object used to store log records.
 
     def emit(self, record: LogRecord):
         """Store the record in the queue.
