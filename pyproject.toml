@@ -81,13 +81,15 @@ ignore = [
     "ANN003",
     "ANN101",
     "ANN102",
-    "DOC602",
-    "DOC603",
+#    "DOC602",
+#    "DOC603",
 ]
 arg-type-hints-in-docstring = false
 check-return-types = false
 skip-checking-short-docstrings = false
 suppress-none-returning = true
+only-attrs-with-ClassVar-are-treated-as-class-attrs = true
+allow-init-docstring = true
 
 [tool.ruff]
 extend-exclude = [
@@ -96,7 +98,7 @@ extend-exclude = [
 
 [tool.ruff.lint]
 select = ["D", ]
-ignore = ["D107",]
+# ignore = ["D107",]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

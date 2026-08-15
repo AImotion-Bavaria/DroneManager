@@ -150,13 +150,6 @@ class InputWithHistory(Input):
 class DroneOverview(Static):
     """Widget to show key values for a drones.
 
-    Args:
-        drone: Dummy text
-        update_frequency: Dummy text
-        logger: Dummy text
-        *args: Passthrough to textual Static class.
-        **kwargs: Passthrough to textual Static class.
-
     Attributes:
         drone: Dummy text
         update_frequency: Dummy text
@@ -179,6 +172,14 @@ class DroneOverview(Static):
     """(class attribute) The spacing between columns."""
 
     def __init__(self, drone: Drone, update_frequency: float, logger: logging.Logger, *args, **kwargs):
+        """
+        Args:
+            drone:
+            update_frequency:
+            logger:
+            *args:
+            **kwargs:
+        """
         super().__init__(*args, **kwargs)
         self.drone: Drone = drone
         self.update_frequency: float = update_frequency
@@ -370,7 +371,7 @@ class TextualLogHandler(logging.Handler):
         self._queue: Queue[LogRecord] = Queue(self._maxsize)
 
     def emit(self, record: LogRecord):
-        """Write the log record to the textual log pane.
+        """Store the record in the queue.
 
         Args:
             record: The log record to write out.
@@ -378,7 +379,13 @@ class TextualLogHandler(logging.Handler):
         self._queue.put_nowait(record)
 
     def drain(self, n_records: int = 100):
+        """Call this to drain records from the queue and write them to the log pane.
 
+        Called every so often by the CLI module.
+
+        Args:
+            n_records: How many records to drain at most per call.
+        """
         for _ in range(n_records):
             try:
                 record = self._queue.get_nowait()
