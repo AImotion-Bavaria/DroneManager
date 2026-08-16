@@ -1,24 +1,37 @@
+"""Module for a basic stream receiving plugin using TCP and OpenCV."""
 import asyncio
+import logging
 import struct
 from collections.abc import Callable
 
 import cv2
 import numpy as np
 from dronemanager.plugin import Plugin
+import dronemanager.core
 
 
 class StreamPlugin(Plugin):
-    """Plugin to receive video stream from Unity via TCP."""
+    """Plugin to receive video stream via TCP.
 
-    # This prefix is used for CLI commands (e.g., 'unity start')
+    Designed to work the Holodeck unity plugin out of the box. Images are received, decoded and then sent to
+    registered callback functions.
+    """
+
     PREFIX = "stream"
+    """Used for CLI commands (e.g., 'stream start')"""
 
-    def __init__(self, dm, logger, name, ip="127.0.0.1", port=5000, **kwargs):
-        """Args:
-        ip: Default IP, can be set via config.json 'plugin_settings'.
-        port: Default Port, can be set via config.json 'plugin_settings'.
+    def __init__(self, dm: dronemanager.core.DroneManager, logger: logging.Logger, name: str, ip: str = "127.0.0.1",
+                 port: int = 5000):
+        """Create StreamPlugin.
+
+        Args:
+            dm: The assocciated DroneManager instance.
+            logger: The logger for error output.
+            name: The name of the plugin.
+            ip: Default IP, can be set via config.json 'plugin_settings'.
+            port: Default Port, can be set via config.json 'plugin_settings'.
         """
-        super().__init__(dm, logger, name, **kwargs)
+        super().__init__(dm, logger, name)
         self.default_ip = ip
         self.default_port = int(port)
         self.running = False
@@ -33,12 +46,15 @@ class StreamPlugin(Plugin):
             "stop": self.stop_stream
         }
 
-    async def start_stream(self, ip: str = None, port: int = None):
+    async def start_stream(self, ip: str = None, port: int = None) -> bool:
         """Starts the Video Stream.
 
         Args:
             ip: Override the default IP (optional).
             port: Override the default Port (optional).
+
+        Returns:
+            Whether the stream started successfully.
         """
         # Resolve IP/Port: CLI Arg -> Config Default -> Hardcoded Default
         target_ip = ip if ip is not None else self.default_ip
@@ -67,7 +83,6 @@ class StreamPlugin(Plugin):
                 pass
         cv2.destroyAllWindows()
         self.logger.info("Stream stopped.")
-        return True
 
     async def display(self):
         """Toggles the display of the stream."""
@@ -79,13 +94,34 @@ class StreamPlugin(Plugin):
         await super().close()
 
     def add_callback(self, callback_function: Callable):
+        """Add a callback function to be executed on every received frame.
+
+        The callback function must be a plain function, not a coroutine. It is called for every frame, so it should
+        complete very quickly. If you wish to have intensive computations, the callback should send the image onward
+        to another thread to be processed.
+
+        Args:
+            callback_function: The callback function.
+        """
         self.callbacks.add(callback_function)
 
     def remove_callback(self, callback_function: Callable):
+        """Remove a callback function from the stream.
+
+        Args:
+            callback_function: The callback function to be removed.
+        """
         self.callbacks.remove(callback_function)
 
-    async def _stream_loop(self, ip, port):
-        """The main async receiving loop."""
+    async def _stream_loop(self, ip: str, port: int):
+        """The main async receiving loop.
+
+        Opens a TCP stream to the target ip and port and continuously reads incoming images. Also processes callbacks.
+
+        Args:
+            ip: The IP from which we are receiving the stream.
+            port: The port from which we are receiving the stream.
+        """
         while self.running:
             reader = None
             writer = None
@@ -128,7 +164,8 @@ class StreamPlugin(Plugin):
                 # If connection fails, wait 2 seconds before retrying
                 await asyncio.sleep(2)
             except Exception as e:
-                self.logger.error(f"Stream Error: {e}")
+                self.logger.error("Exception in the stream receiving loop! Check logs for details.")
+                self.logger.debug(repr(e), exc_info=True)
                 await asyncio.sleep(1)
             finally:
                 if writer:

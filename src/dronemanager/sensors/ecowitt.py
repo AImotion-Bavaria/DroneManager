@@ -32,6 +32,7 @@ ECOWITT_ID_MAP_COMMON = {
     "0x0B": "wind_speed",
     "0x0C": "gust_speed",
 }
+"""Maps code bytes for "common" entries to understandable strings."""
 
 
 ECOWITT_ID_MAP_RAIN = {
@@ -42,6 +43,7 @@ ECOWITT_ID_MAP_RAIN = {
     "0x12": "cum_rain_month",
     "0x13": "cum_rain_year",
 }
+"""Maps code bytes for "rain" entries to understandable strings."""
 
 
 class WeatherDataEntry:
@@ -57,9 +59,9 @@ class WeatherDataEntry:
             value: The value of the metric.
             unit: The unit of the metric.
         """
-        self.name = name  #: A label for the information.
-        self.value = value  #: The value of the metric.
-        self.unit = unit  #: The unit of the metric.
+        self.name: str = name  #: A label for the information.
+        self.value: float = value  #: The value of the metric.
+        self.unit: str = unit  #: The unit of the metric.
 
 
 class WeatherData:
@@ -71,30 +73,31 @@ class WeatherData:
         Args:
             timestamp: A time stamp for the data.
         """
-        self.temperature = WeatherDataEntry("Temperature")  #: Current temperature
-        self.dew_point = WeatherDataEntry("Dew point")  #: Current dew point
-        self.humidity = WeatherDataEntry("Humidity")  #: Current humidity
-        self.light = WeatherDataEntry("Light")  #: Current solar irradiance
-        self.uvi = WeatherDataEntry("UVI")  #: Current UV index
-        self.wind_speed = WeatherDataEntry("Wind Speed")  #: Current wind speed
-        self.wind_direction = WeatherDataEntry("Wind Direction")  #: Wind direction, 0 North
-        self.gust_speed = WeatherDataEntry("Gust Speed")  #: Gust speed
-        self.wind_speed_max_day = WeatherDataEntry("Day max wind")  #: Highest wind speed today
+        self.temperature: WeatherDataEntry = WeatherDataEntry("Temperature")  #: Current temperature
+        self.dew_point: WeatherDataEntry = WeatherDataEntry("Dew point")  #: Current dew point
+        self.humidity: WeatherDataEntry = WeatherDataEntry("Humidity")  #: Current humidity
+        self.light: WeatherDataEntry = WeatherDataEntry("Light")  #: Current solar irradiance
+        self.uvi: WeatherDataEntry = WeatherDataEntry("UVI")  #: Current UV index
+        self.wind_speed: WeatherDataEntry = WeatherDataEntry("Wind Speed")  #: Current wind speed
+        self.wind_direction: WeatherDataEntry = WeatherDataEntry("Wind Direction")  #: Wind direction, 0 North
+        self.gust_speed: WeatherDataEntry = WeatherDataEntry("Gust Speed")  #: Gust speed
+        self.wind_speed_max_day: WeatherDataEntry = WeatherDataEntry("Day max wind")  #: Highest wind speed today
 
-        self.rain_event = WeatherDataEntry("Rain Event")  #: Rain event
-        self.rain_rate = WeatherDataEntry("Current Rain Rate")  #: Current rain rate
-        self.cum_rain_today = WeatherDataEntry("Rain this Day")  # Cumulative rain this day
-        self.cum_rain_week = WeatherDataEntry("Rain this Week")  #: Cumulative rain this week
-        self.cum_rain_month = WeatherDataEntry("Rain this Month")  #: Cumulative rain this month
-        self.cum_rain_year = WeatherDataEntry("Rain Year")  #: Cumulative rain this year
+        self.rain_event: WeatherDataEntry = WeatherDataEntry("Rain Event")  #: Rain event
+        self.rain_rate: WeatherDataEntry = WeatherDataEntry("Current Rain Rate")  #: Current rain rate
+        self.cum_rain_today: WeatherDataEntry = WeatherDataEntry("Rain this Day")  # Cumulative rain this day
+        self.cum_rain_week: WeatherDataEntry = WeatherDataEntry("Rain this Week")  #: Cumulative rain this week
+        self.cum_rain_month: WeatherDataEntry = WeatherDataEntry("Rain this Month")  #: Cumulative rain this month
+        self.cum_rain_year: WeatherDataEntry = WeatherDataEntry("Rain Year")  #: Cumulative rain this year
 
-        self.pressure = WeatherDataEntry("Pressure")  #: Atmospheric pressure
-        self.time = timestamp  #: The time of the data collection
+        self.pressure: WeatherDataEntry = WeatherDataEntry("Pressure")  #: Atmospheric pressure
+        self.time: datetime.datetime = timestamp  #: The time of the data collection
         #: A list of the attribute, other than time, that get written out
-        self.data_entries = [self.temperature, self.dew_point, self.humidity, self.light, self.uvi, self.wind_speed,
-                             self.wind_direction, self.gust_speed, self.wind_speed_max_day, self.rain_event,
-                             self.rain_rate, self.cum_rain_today, self.cum_rain_week, self.cum_rain_month,
-                             self.cum_rain_year, self.pressure]
+        self.data_entries: list[WeatherDataEntry] = [self.temperature, self.dew_point, self.humidity, self.light,
+                                                     self.uvi, self.wind_speed, self.wind_direction, self.gust_speed,
+                                                     self.wind_speed_max_day, self.rain_event, self.rain_rate,
+                                                     self.cum_rain_today, self.cum_rain_week, self.cum_rain_month,
+                                                     self.cum_rain_year, self.pressure]
 
     def __str__(self) -> str:
         """Return weather data as a nice string representation.
