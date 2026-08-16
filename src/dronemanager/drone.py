@@ -293,7 +293,7 @@ class Drone(ABC, Generic[CommType]):
         telemetry_handler.setFormatter(COMMON_FORMATTER)
         self.add_telemetry_handler(telemetry_handler)
 
-        self.position_update_rate = config.position_rate
+        self.position_update_rate = self.config.position_rate
         asyncio.create_task(self._task_scheduler())
 
     async def _task_scheduler(self):

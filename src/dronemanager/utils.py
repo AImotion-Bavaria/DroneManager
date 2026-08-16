@@ -195,7 +195,7 @@ def offset_from_gps(origin: Sequence[float], gps1: Sequence[float], gps2: Sequen
     """
     dist_horiz = haversine((gps1[0], gps1[1]), (gps2[0], gps2[1]), unit=Unit.METERS)
     dist_alt = gps2[2] - gps1[2]
-    heading = heading_gps(gps1, gps2)
+    heading = heading_gps(gps1, gps2) * math.pi / 180
     lat, long = inverse_haversine(origin[:2], dist_horiz, heading, unit=Unit.METERS)
     return lat, long, origin[2] + dist_alt
 
@@ -230,7 +230,7 @@ def ned_from_gps(gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, f
 
     north = k * (math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * cos_long_diff)
     east = k * math.cos(lat2_rad) * math.sin(long2_rad - long1_rad)
-    down = gps1[2] - gps2[2]
+    down = gps2[2] - gps1[2]
     return north * EARTH_RADIUS, east * EARTH_RADIUS, down
 
 
@@ -266,6 +266,7 @@ def parse_address(string: str) -> tuple[str, str, int]:
     scheme, rest = string.split("://")
     if scheme == "serial":
         loc, append = rest.split(":")
+        append = int(append)
     else:
         parse_drone_addr = urlparse(string)
         scheme = parse_drone_addr.scheme

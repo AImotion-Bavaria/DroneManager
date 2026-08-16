@@ -81,7 +81,7 @@ class Sensor(Plugin, abc.ABC):
 
 
 class SensorPlugin(MetaPlugin):
-    """ This plugin handles loading and management of sensor plugins.
+    """This plugin handles loading and management of sensor plugins.
 
     Only supports two CLI commands:
 
