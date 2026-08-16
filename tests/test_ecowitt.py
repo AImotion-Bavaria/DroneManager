@@ -88,3 +88,4 @@ async def test_plugin_dummy(dm: DroneManager):
 
     await dm.ecowitt.reconnect()
     await dm.ecowitt.disconnect()
+    await dm.sensor.unload("ecowitt")

@@ -15,6 +15,12 @@ class StreamPlugin(Plugin):
 
     Designed to work the Holodeck unity plugin out of the box. Images are received, decoded and then sent to
     registered callback functions.
+
+    This plugin has three CLI commands:
+
+    * :py:meth:`start`: Connect to and start processing a stream.
+    * :py:meth:`display`: Toggles a live display of the images from the stream in a separate window.
+    * :py:meth:`stop`: Close the stream.
     """
 
     PREFIX = "stream"
@@ -92,6 +98,10 @@ class StreamPlugin(Plugin):
         """Cleanup when plugin is unloaded."""
         await self.stop_stream()
         await super().close()
+
+    async def status(self):
+        """Log whether we are currently streaming, displaying, and the registered callbacks."""
+        self.logger.info(f"Active: {self.running}, Display: {self.display_stream}, Callbacks: {self.callbacks}")
 
     def add_callback(self, callback_function: Callable):
         """Add a callback function to be executed on every received frame.

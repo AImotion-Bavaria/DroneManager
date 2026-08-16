@@ -583,7 +583,7 @@ class DroneManager:
 # PLUGINS ##############################################################################################################
 
     @property
-    def plugin_options(self):
+    def plugin_options(self) -> list[str]:
         return self.plugin_loader.plugin_options()
 
     @property

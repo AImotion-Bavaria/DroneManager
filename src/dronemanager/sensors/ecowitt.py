@@ -216,7 +216,7 @@ class WeatherData:
 class EcoWittSensor(Sensor):
     """Class for EcoWitt Weather stations that support their HTTP API."""
 
-    DEPENDENCIES = ["sensor"]
+    DEPENDENCIES: list[str] = ["sensor"]
     """Sensor plugin must be loaded before this can be loaded."""
 
     def __init__(self, dm: dronemanager.core.DroneManager, logger: logging.Logger, name: str = "ecowitt"):
@@ -248,8 +248,7 @@ class EcoWittSensor(Sensor):
             ip = self.ip
         self.logger.info(f"Adding sensor with {ip}...")
         try:
-            response = await asyncio.get_running_loop().run_in_executor(None, requests.get,
-                                                                        f"http://{ip}/get_livedata_info")
+            response = await asyncio.get_running_loop().run_in_executor(None, _get_data, ip)
         except Exception as e:
             self.logger.warning(f"No response from Ecowitt sensor at {ip}")
             self.logger.debug(repr(e), exc_info=True)
@@ -275,9 +274,7 @@ class EcoWittSensor(Sensor):
         """
         try:
             timestamp = datetime.datetime.now(datetime.timezone.utc)
-            response = await asyncio.get_running_loop().run_in_executor(None,
-                                                                        requests.get,
-                                                                        f"http://{self.ip}/get_livedata_info")
+            response = await asyncio.get_running_loop().run_in_executor(None, _get_data, self.ip)
             if response.status_code == 200:
                 data = WeatherData.from_response_json(response.json(), timestamp=timestamp)
                 self.last_data = data
@@ -297,3 +294,15 @@ class EcoWittSensor(Sensor):
     async def disconnect(self):
         """Dummy function since there is no disconnect procedure."""
         pass
+
+
+def _get_data(ip: str) -> requests.Response:
+    """Partial requests get with timeout.
+
+    Args:
+        ip: IP of the sensor.
+
+    Returns:
+        The result of the requests call.
+    """
+    return requests.get(f"http://{ip}/get_livedata_info", timeout=3)

@@ -30,6 +30,10 @@ class UDPClient:
         self.frequency = frequency
         self.duration = duration
 
+    def __str__(self):
+        return (f"Client: {self.ip}:{self.port}, {self.frequency} Hz, "
+                f"{self.start_time + self.duration - time.time()}s remaining.")
+
 
 class UDPPlugin(Plugin):
     """Communication happens over port 31659. A client will send a json message with the desired frequency and duration
@@ -43,6 +47,7 @@ class UDPPlugin(Plugin):
         }
 
     """
+
     PREFIX = "UDP"
 
     def __init__(self, dm, logger, name, server_port: int = SERVER_PORT, max_frequency: float = MAX_FREQUENCY,
@@ -72,6 +77,10 @@ class UDPPlugin(Plugin):
     async def close(self):
         await super().close()
         self._stop_threads = True
+
+    async def status(self):
+        """Log currently connected clients."""
+        self.logger.info(f"Clients: {' | '.join([str(client) for client in self.clients])}")
 
     def _listen_for_clients(self, stop):
         self.logger.debug("Listening for clients...")

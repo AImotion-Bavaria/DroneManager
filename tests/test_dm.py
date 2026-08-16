@@ -21,7 +21,8 @@ async def test_dm_plugins(dm: DroneManager):
     try:
         available_but_not_loaded = [item for item in dm.plugin_options() if item not in dm.currently_loaded_plugins()]
         for plugin in available_but_not_loaded:
-            await dm.load_plugin(plugin)
+            res = await dm.load_plugin(plugin)
+            assert res is not None, f"Failed to load {plugin}!"
         for plugin in dm.plugins:
             plugin_obj = getattr(dm, plugin, None)
             if plugin_obj:

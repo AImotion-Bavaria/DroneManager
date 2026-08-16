@@ -41,7 +41,7 @@ async def test_control_screen(dm: DroneManager):
             await pilot.press("enter")
             await pilot.pause()
 
-        # Test rone widget
+        # Test drone widget
         assert screen is not None
         assert "tom" not in screen.drone_widgets
         await screen._add_drone_object("tom", drone)

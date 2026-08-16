@@ -1,30 +1,67 @@
 """Plugin and abstract base class for external sensors, such as weather sensors.
 
-They're specifically for plugins that connect to and sporadically query some external data source.
-
 Similar to missions, these are a special type of plugin with extra functions to support their intended purpose.
 The core extra component is the :py:meth:`~dronemanager.plugins.sensor.Sensor.get_data` function, which should
 return whatever data the sensor provides.
 Like missions, sensor modules go into their own special folder ``sensors``. Each sensor module can contain exactly one
-specific sensor plugin, which must subclass :py:class:`~dronemanager.plugins.sensor.Sensor` and end with "Sensor"
+specific sensor plugin, which must subclass :py:class:`~dronemanager.plugins.sensor.Sensor` and end with "Sensor".
+Also like missions, they make use of the ``name`` parameter in their constructors to allow for multiple sensors of the
+same class.
 
-The sensor get_data function may be slow so sources that should be processed continuously should not be
-implemented as a sensor.
+They're intended specifically for plugins that connect to and sporadically query some external data source.
+Data sources that are processed continuously should not use the :py:class:`Sensor <dronemanager.plugins.sensor.Sensor>`
+class, instead implementing their own processing loop, preferably in a separate thread or process.
 """
 import abc
+import logging
 import pathlib
+from typing import Callable
 
+import dronemanager.core
 from dronemanager.plugin import Plugin, MetaPlugin
 from dronemanager.utils import SRC_DIR, DM_INSTALL_DIR
 
 
 class Sensor(Plugin, abc.ABC):
-    PREFIX = "YOUDIDSOMETHINGWRONG"
+    """Abstract base class for specific sensor plugins.
 
-    def __init__(self, dm, logger, name="YOUDIDSOMETHINGWRONG"):
+    This is a special subtype of plugin with automatic discovery and abstract methods to support appropriate modules.
+    The main change is that sensors should provide a default value for the ``name`` parameter in the constructor, which
+    is used to overwrite the PREFIX by default. Multiple instances of the same sensor can then be added by using
+    different names for each.
+
+    Implementing subclasses should call :py:meth:`__init__` at the start of their constructors.
+
+    The key functions are:
+
+    * :py:meth:`connect`: Connect to the sensor, for example through UDP.
+    * :py:meth:`get_data`: Query the sensor for current data.
+    * :py:meth:`disconnect`: Disconnect from the sensor. This should not shut down the sensor plugin itself.
+    * :py:meth:`status`: Should write status information to the logger.
+
+    Like normal plugins they can define dependencies.
+    """
+
+    PREFIX: str = "YOUDIDSOMETHINGWRONG"
+    """Prefix used for this plugin.
+
+    Implementing classes can ignore this, as it should be overwritten with the name parameter anyway.
+
+    :meta hide-value:"""
+
+    def __init__(self, dm: dronemanager.core.DroneManager, logger: logging.Logger, name: str = "YOUDIDSOMETHINGWRONG"):
+        """Abstract constructor.
+
+        Args:
+            dm: The associated DroneManager instance
+            logger: The logger for output and errors.
+            name: The name of the sensor plugin.
+        """
         super().__init__(dm, logger, name)
-        self.PREFIX = name
-        self.cli_commands = {
+        self.PREFIX: str = name  # Set the prefix to the name attribute.
+        #: Dictionary of available CLI commands.
+        #: Implementing subclasses should add, but not remove from this.
+        self.cli_commands: dict[str, Callable] = {
             "connect": self.connect,
             "data": self.log_data,
             "status": self.status,
@@ -32,37 +69,59 @@ class Sensor(Plugin, abc.ABC):
             "reconnect": self.reconnect,
         }
 
-        # Connection arguments for convenient reconnect.
-        self.connect_args = None
-        self.connect_kwargs = None
+        self.connect_args: any = None  #: Connection args for convenient reconnect.
+        self.connect_kwargs: any = None  #: Connection kwargs for convenient reconnect.
 
-        # The last received/collected data should be stored here for others to use without access delay
-        self.last_data = None
+        #: The last received/collected data should be stored here for others to use without access delay
+        self.last_data: any = None
 
     async def start(self):
-        """This function is called when the sensor plugin is loaded to automatically start any background functions.
+        """This function is called once the sensor plugin is loaded.
+
+        By default, just starts the registered background functions.
         """
         await super().start()
 
     async def close(self):
-        """This function must end all running asyncio tasks. By default, all tasks in self.running_tasks are
-        cancelled.
+        """Shutdown function for sensors.
+
+        By default, disconnects from the sensor and cancels all tasks in self.running_tasks.
         """
         await self.disconnect()
         await super().close()
 
     @abc.abstractmethod
-    async def connect(self, *args, **kwargs):
+    async def connect(self, *args: any, **kwargs: any) -> bool:
         """Connect to a sensor.
 
-        Implementing classes should call this at the start of their connect function."""
+        Implementing classes should call this at the start of their connect function. The args and kwargs here are used
+        to store the connection arguments to allow a blank "reconnect".
+
+        Implementing classes should return whether they were able to connect.
+
+        Args:
+            *args: Connection args, stored for reconnect.
+            **kwargs: Connection kwargs, stored for reconnect.
+
+        Returns:
+            Dummy return value.
+        """
         self.connect_args = args
         self.connect_kwargs = kwargs
+        return True
 
     @abc.abstractmethod
-    async def get_data(self):
-        """Should return whatever information the sensor provides,"""
-        pass
+    async def get_data(self) -> object | None:
+        """Should return whatever information the sensor provides.
+
+        Should return ``None`` if there was an error or the sensor is not available.
+        Return values can be any arbitrary type, but should at least have a nice string representation for logging
+        purposes.
+
+        Returns:
+            The data or ``None``.
+        """
+        ...
 
     async def log_data(self):
         """Write data to the logger."""
@@ -71,12 +130,15 @@ class Sensor(Plugin, abc.ABC):
     @abc.abstractmethod
     async def status(self):
         """Should write information about the current status of the sensor to the logger under INFO."""
-        pass
+        ...
 
     @abc.abstractmethod
     async def disconnect(self):
-        """Disconnect from a sensor. Should handle any socket clearing etc."""
-        pass
+        """Disconnect from a sensor. Should handle any socket clearing etc.
+
+        Implementations should be safe to be called repeatedly.
+        """
+        ...
 
     async def reconnect(self):
         """Disconnect and then reconnect from a sensor."""
@@ -90,8 +152,10 @@ class SensorPlugin(MetaPlugin):
     Only supports two CLI commands:
 
     * ``load``: Load a new sensor, optionally with a custom name to have multiple sensors of the same type
-    * ``status``: Log information about currently loaded sensors, by calling
-      :py:meth:`Sensor.status() <dronemanager.plugins.sensor.Sensor.status>`
+    * :py:meth:`status`: Log information about currently loaded sensors, by calling
+      :py:meth:`Sensor.status() <dronemanager.plugins.sensor.Sensor.status>` for each connected sensor.
+    * :py:meth:`unload`: Unload a sensor.
+
     """
 
     EXAMPLE_DIR: pathlib.Path = SRC_DIR.joinpath("sensors")
@@ -105,27 +169,22 @@ class SensorPlugin(MetaPlugin):
     :meta hide-value:"""
 
     VALID_CLASS_SUFFIX: str = "Sensor"
-    """Valid sub-plugins must have class names ending with this string.
-
-    :meta hide-value:"""
+    """Valid sub-plugins must have class names ending with this string."""
 
     NAMESPACE: str = "sensors"
-    """Modules with sub-plugins have this prepended to their import to reduce collisions.
-
-    :meta hide-value:"""
+    """Modules with sub-plugins have this prepended to their import to reduce collisions."""
 
     SUBTYPE: type = Sensor
-    """The type that sub-plugins must subclass to be valid.
-
-    :meta hide-value:"""
+    """The type that sub-plugins must subclass to be valid."""
 
     PREFIX: str = "sensor"
-    """ PREFIX: (class attribute) The prefix for the CLI commands, "sensor" by default."""
+    """The prefix for the CLI commands, "sensor" by default."""
 
     def __init__(self, dm, logger, name):
         super().__init__(dm, logger, name)
         self.cli_commands = {
             "load": self.load,
+            "unload": self.unload,
             "status": self.status,
         }
 
