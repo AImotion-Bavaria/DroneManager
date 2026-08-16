@@ -10,8 +10,10 @@ def test_config():
     assert conf.mav_system_id is not None
 
 
-async def test_dm_plugin_loading(dm: DroneManager):
+async def test_dm_plugins(dm: DroneManager):
     """Test loading each plugin.
+
+    Tests loading and common function for all plugins.
 
     Args:
         dm: DroneManager instance.

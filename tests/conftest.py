@@ -1,7 +1,11 @@
 """Module for pytest fixtures used by many tests."""
 import pytest
+import pygame
 from dronemanager.core import DroneManager
 from dronemanager.drone import DroneMAVSDK
+
+
+pygame.init()
 
 
 @pytest.fixture

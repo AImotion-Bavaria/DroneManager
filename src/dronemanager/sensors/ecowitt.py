@@ -243,7 +243,7 @@ class EcoWittSensor(Sensor):
         Returns:
             Whether we got a response with HTTP status code 200.
         """
-        await super().connect(ip = ip)
+        await super().connect(ip=ip)
         if ip is None:
             ip = self.ip
         self.logger.info(f"Adding sensor with {ip}...")
