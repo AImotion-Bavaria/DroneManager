@@ -149,13 +149,15 @@ class Sensor(Plugin, abc.ABC):
 class SensorPlugin(MetaPlugin):
     """This plugin handles loading and management of sensor plugins.
 
-    Only supports two CLI commands:
+    This plugin does not represent the sensors themselves, and implementation of a new sensor-type plugin should NOT
+    subclass this plugin, but :py:class:`Sensor`.
 
-    * ``load``: Load a new sensor, optionally with a custom name to have multiple sensors of the same type
-    * :py:meth:`status`: Log information about currently loaded sensors, by calling
-      :py:meth:`Sensor.status() <dronemanager.plugins.sensor.Sensor.status>` for each connected sensor.
+    This plugin has three CLI commands:
+
+    * :py:meth:`load`: Load a new sensor, optionally with a custom name to have multiple sensors of the same type
     * :py:meth:`unload`: Unload a sensor.
-
+    * :py:meth:`status`: Log information about currently loaded sensors, by calling
+      :py:meth:`Sensor.status` for each connected sensor.
     """
 
     EXAMPLE_DIR: pathlib.Path = SRC_DIR.joinpath("sensors")
@@ -181,7 +183,15 @@ class SensorPlugin(MetaPlugin):
     """The prefix for the CLI commands, "sensor" by default."""
 
     def __init__(self, dm, logger, name):
+        """Create the SensorPlugin.
+
+        Args:
+            dm: The associated DroneManager instance.
+            logger: The logger used for status info and errors.
+            name: The name of the plugin.
+        """
         super().__init__(dm, logger, name)
+        #: Available cli commands.
         self.cli_commands = {
             "load": self.load,
             "unload": self.unload,
