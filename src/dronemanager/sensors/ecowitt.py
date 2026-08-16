@@ -32,7 +32,9 @@ ECOWITT_ID_MAP_COMMON = {
     "0x0B": "wind_speed",
     "0x0C": "gust_speed",
 }
-"""Maps code bytes for "common" entries to understandable strings."""
+"""Maps code bytes for "common" entries to understandable strings.
+
+:meta hide-value:"""
 
 
 ECOWITT_ID_MAP_RAIN = {
@@ -43,7 +45,9 @@ ECOWITT_ID_MAP_RAIN = {
     "0x12": "cum_rain_month",
     "0x13": "cum_rain_year",
 }
-"""Maps code bytes for "rain" entries to understandable strings."""
+"""Maps code bytes for "rain" entries to understandable strings.
+
+:meta hide-value:"""
 
 
 class WeatherDataEntry:
@@ -56,8 +60,8 @@ class WeatherDataEntry:
 
         Args:
             name: A label for the information.
-            value: The value of the metric.
-            unit: The unit of the metric.
+            value: The value of the metric. Default ``math.nan``.
+            unit: The unit of the metric. Default "".
         """
         self.name: str = name  #: A label for the information.
         self.value: float = value  #: The value of the metric.
@@ -67,7 +71,7 @@ class WeatherDataEntry:
 class WeatherData:
     """Data class for weather information."""
 
-    def __init__(self, timestamp: datetime.datetime = None):
+    def __init__(self, timestamp: datetime.datetime):
         """Create WeatherData object.
 
         Args:
@@ -109,7 +113,7 @@ class WeatherData:
                                                   for entry in self.data_entries])
 
     @classmethod
-    def from_response_json(cls, response_json: dict, timestamp: datetime.datetime | None = None) -> "WeatherData":
+    def from_response_json(cls, response_json: dict, timestamp: datetime.datetime) -> "WeatherData":
         """Parse the response json into a WeatherData object.
 
         Also translates the id bytes to readable strings.
@@ -212,6 +216,9 @@ class WeatherData:
 class EcoWittSensor(Sensor):
     """Class for EcoWitt Weather stations that support their HTTP API."""
 
+    DEPENDENCIES = ["sensor"]
+    """Sensor plugin must be loaded before this can be loaded."""
+
     def __init__(self, dm: dronemanager.core.DroneManager, logger: logging.Logger, name: str = "ecowitt"):
         """Create an EcoWittSensor.
 
@@ -264,13 +271,17 @@ class EcoWittSensor(Sensor):
             Either the data or None if there was an error.
         """
         try:
-            timestamp = datetime.datetime.now(datetime.UTC)
+            timestamp = datetime.datetime.now(datetime.timezone.utc)
             response = await asyncio.get_running_loop().run_in_executor(None,
                                                                         requests.get,
                                                                         f"http://{self.ip}/get_livedata_info")
-            data = WeatherData.from_response_json(response.json(), timestamp=timestamp)
-            self.last_data = data
-            return data
+            if response.status_code == 200:
+                data = WeatherData.from_response_json(response.json(), timestamp=timestamp)
+                self.last_data = data
+                return data
+            else:
+                self.logger.warning(f"Received a non-OK response code {response.status_code} from sensor!")
+                return None
         except Exception as e:
             self.logger.warning("Couldn't get a response from sensor!")
             self.logger.debug(repr(e), exc_info=True)

@@ -48,6 +48,7 @@ tests = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "responses",  # For mocking requests.
     "flake8",
     "flake8-pyproject",
     "flake8-annotations",
