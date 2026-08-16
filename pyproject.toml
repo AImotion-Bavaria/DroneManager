@@ -65,7 +65,8 @@ dronemanager = ["resources/*"]
 addopts = [
     "--import-mode=importlib",
     "--cov=dronemanager",
-    "--cov-report=term-missing"
+    "--cov-report=term-missing",
+    "--cov-report=json",
 ]
 asyncio_mode = "auto"
 

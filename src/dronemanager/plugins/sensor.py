@@ -53,7 +53,9 @@ class Sensor(Plugin, abc.ABC):
 
     @abc.abstractmethod
     async def connect(self, *args, **kwargs):
-        """Connect to a sensor."""
+        """Connect to a sensor.
+
+        Implementing classes should call this at the start of their connect function."""
         self.connect_args = args
         self.connect_kwargs = kwargs
 
@@ -63,6 +65,7 @@ class Sensor(Plugin, abc.ABC):
         pass
 
     async def log_data(self):
+        """Write data to the logger."""
         self.logger.info(await self.get_data())
 
     @abc.abstractmethod
@@ -76,6 +79,7 @@ class Sensor(Plugin, abc.ABC):
         pass
 
     async def reconnect(self):
+        """Disconnect and then reconnect from a sensor."""
         await self.disconnect()
         await self.connect(*self.connect_args, **self.connect_kwargs)
 

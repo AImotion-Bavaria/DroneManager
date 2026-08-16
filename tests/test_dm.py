@@ -16,10 +16,17 @@ async def test_dm_plugin_loading(dm: DroneManager):
     Args:
         dm: DroneManager instance.
     """
-    available_but_not_loaded = [item for item in dm.plugin_options() if item not in dm.currently_loaded_plugins()]
-    for plugin in available_but_not_loaded:
-        await dm.load_plugin(plugin)
-    await dm.close()
+    try:
+        available_but_not_loaded = [item for item in dm.plugin_options() if item not in dm.currently_loaded_plugins()]
+        for plugin in available_but_not_loaded:
+            await dm.load_plugin(plugin)
+        for plugin in dm.plugins:
+            plugin_obj = getattr(dm, plugin, None)
+            if plugin_obj:
+                if hasattr(plugin_obj, "status"):
+                    await plugin_obj.status()
+    finally:
+        await dm.close()
 
 
 def test_heading_ned():

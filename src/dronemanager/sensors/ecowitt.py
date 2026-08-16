@@ -228,21 +228,24 @@ class EcoWittSensor(Sensor):
             name: The name to use for this plugin. Default "ecowitt".
         """
         super().__init__(dm, logger, name)
-        self.ip = None  #: The ip of the sensor.
+        self.ip: str = "192.168.1.41"  #: The ip of the sensor.
         self.last_data: WeatherData | None = None  #: The last data we received.
 
-    async def connect(self, ip: str) -> bool:
+    async def connect(self, ip: str | None = None) -> bool:
         """Connect to the EcoWitt sensor.
 
         No connection procedure as such. Instead, we try to request the data and return false if there is no response
         or an exception.
 
         Args:
-            ip: The IP address of the sensor.
+            ip: The IP address of the sensor. If None, use a default value.
 
         Returns:
             Whether we got a response with HTTP status code 200.
         """
+        await super().connect(ip = ip)
+        if ip is None:
+            ip = self.ip
         self.logger.info(f"Adding sensor with {ip}...")
         try:
             response = await asyncio.get_running_loop().run_in_executor(None, requests.get,

@@ -94,6 +94,12 @@ class Plugin(abc.ABC):
         """
         cancel_running_tasks(self.running_tasks)
 
+    @abc.abstractmethod
+    async def status(self):
+        """Log status information about the plugin and its attribues.
+        """
+        raise NotImplementedError
+
 
 class MetaPlugin(Plugin, abc.ABC):
     """Plugin Class for plugins that define other plugin types, such as missions or sensors.

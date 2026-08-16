@@ -49,7 +49,8 @@ async def test_plugin_dummy(dm: DroneManager):
         status=200,
     )
     await dm.load_plugin("sensor")
-    await dm.sensor.load("ecowitt")
+    sensor = await dm.sensor.load("ecowitt")
+    sensor.ip = ip
     res = await dm.ecowitt.connect(ip)
 
     assert res
@@ -78,4 +79,12 @@ async def test_plugin_dummy(dm: DroneManager):
     weather_data = await dm.ecowitt.get_data()
     assert weather_data is None
 
+    responses.add(
+        responses.GET,
+        f"http://{ip}/get_livedata_info",
+        json=EXAMPLE_JSON,
+        status=200,
+    )
+
+    await dm.ecowitt.reconnect()
     await dm.ecowitt.disconnect()
