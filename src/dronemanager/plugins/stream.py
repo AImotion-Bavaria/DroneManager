@@ -158,7 +158,11 @@ class StreamPlugin(Plugin):
                         cv2.imshow(f"Stream ({self.name})", frame)
 
                     for callback in self.callbacks:
-                        callback(frame)
+                        try:
+                            callback(frame)
+                        except Exception as e:
+                            self.logger.error(f"Couldn't process stream callback {callback}! See log for details.")
+                            self.logger.debug(repr(e), exc_info=True)
 
                     # 4. Handle UI events without blocking asyncio
                     # waitKey(1) processes GUI events. We assume this runs on Main Thread.
