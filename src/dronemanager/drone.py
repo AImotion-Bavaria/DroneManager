@@ -259,7 +259,7 @@ class Drone(ABC, Generic[CommType]):
         self.is_paused: bool = False
         self.drone_params: DroneParams | None = None
 
-        self._running_tasks = set()  # Keeps track of coroutines
+        self.running_tasks = set()  # Keeps track of coroutines
 
     @abstractmethod
     def start(self, name: str, config: DroneConfig):
@@ -458,7 +458,7 @@ class Drone(ABC, Generic[CommType]):
 
         Base implementation ends the thread, stops coroutines and closes logging.
         Implementing classes should call this during their own shutdown procedure."""
-        cancel_running_tasks(self._running_tasks)
+        cancel_running_tasks(self.running_tasks)
         for handler in self.logging_handlers:
             self.logger.removeHandler(handler)
         for handler in self.telem_logging_handlers:

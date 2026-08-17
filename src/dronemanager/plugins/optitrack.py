@@ -13,7 +13,7 @@ Motive to something that common FCs expect.
 
 Usage:
     This plugin is intended to work with an OptiTrack tracking system and will not function without.
-    Setup the OptiTrack system and at least one drone to be tracked by the system. Refer to the tracking systems
+    Set up the OptiTrack system and at least one drone to be tracked by the system. Refer to the tracking systems
     documentation for details. The markers on the drone should be configured in Motive as rigid bodies, and Motive
     should be configured to stream these rigid bodies.
 

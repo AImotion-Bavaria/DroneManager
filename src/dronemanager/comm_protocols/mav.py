@@ -209,7 +209,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         self._ack_listeners: dict[tuple[int, int, int, int, int], list] = dict()
 
         # Set up the connect check
-        self._running_tasks.add(asyncio.create_task(self._connect_check()))
+        self.running_tasks.add(asyncio.create_task(self._connect_check()))
 
     def start(self, name, config: DroneConfig):
         super().start(name, config)
@@ -254,15 +254,15 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         attr_string = "\n   ".join(["{}: {}".format(key, value) for key, value in self.__dict__.items()])
         self.logger.debug(f"Initialized Drone {self.name}, {self.__class__.__name__}:\n   {attr_string}")
 
-        self._running_tasks.add(asyncio.create_task(self._process_messages()))
+        self.running_tasks.add(asyncio.create_task(self._process_messages()))
         self._get_drone_info()
-        self._running_tasks.add(asyncio.create_task(self._configure_message_rates()))
+        self.running_tasks.add(asyncio.create_task(self._configure_message_rates()))
         self._schedule_update_tasks()
 
         param_load_task = asyncio.create_task(self.load_parameters())
         param_load_task_awaiter = asyncio.create_task(coroutine_awaiter(param_load_task, self.logger))
-        self._running_tasks.add(param_load_task)
-        self._running_tasks.add(param_load_task_awaiter)
+        self.running_tasks.add(param_load_task)
+        self.running_tasks.add(param_load_task_awaiter)
         self.initialized = True
 
     @property
@@ -373,8 +373,8 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         msg = MavlinkMessage("COMMAND_LONG", self.comm.system_id, self.comm.component_id, self.system_id, target_component_id,
                              fields_json=json.dumps(fields))
         send_task = asyncio.create_task(self.send_message(msg))
-        self._running_tasks.add(send_task)
-        self._running_tasks.add(coroutine_awaiter(send_task, self.logger))
+        self.running_tasks.add(send_task)
+        self.running_tasks.add(coroutine_awaiter(send_task, self.logger))
         return self._listen_ack(command_msg_id, target_component_id)
 
     def request_message(self, msg_id: int, message_name: str, target_component_id: int):
@@ -509,16 +509,16 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             self.logger.warning("Can't disconnect from an armed drone!")
 
     def _schedule_update_tasks(self) -> None:
-        self._running_tasks.add(asyncio.create_task(self._arm_check()))
-        self._running_tasks.add(asyncio.create_task(self._flightmode_check()))
-        self._running_tasks.add(asyncio.create_task(self._inair_check()))
-        self._running_tasks.add(asyncio.create_task(self._gps_check()))
-        self._running_tasks.add(asyncio.create_task(self._g_pos_check()))
-        self._running_tasks.add(asyncio.create_task(self._vel_rpos_check()))
-        self._running_tasks.add(asyncio.create_task(self._att_check()))
-        self._running_tasks.add(asyncio.create_task(self._battery_check()))
-        self._running_tasks.add(asyncio.create_task(self._status_check()))
-        self._running_tasks.add(asyncio.create_task(self._ensure_message_rates()))
+        self.running_tasks.add(asyncio.create_task(self._arm_check()))
+        self.running_tasks.add(asyncio.create_task(self._flightmode_check()))
+        self.running_tasks.add(asyncio.create_task(self._inair_check()))
+        self.running_tasks.add(asyncio.create_task(self._gps_check()))
+        self.running_tasks.add(asyncio.create_task(self._g_pos_check()))
+        self.running_tasks.add(asyncio.create_task(self._vel_rpos_check()))
+        self.running_tasks.add(asyncio.create_task(self._att_check()))
+        self.running_tasks.add(asyncio.create_task(self._battery_check()))
+        self.running_tasks.add(asyncio.create_task(self._status_check()))
+        self.running_tasks.add(asyncio.create_task(self._ensure_message_rates()))
 
     async def _configure_message_rates(self) -> None:
         if self.is_connected:
@@ -1265,7 +1265,7 @@ class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
 
 
 # ========== CAMERA IMPLEMENTATION ====================================================================================
-# TODO: Everything below this
+
 
 class MAVSDKCamera(Camera[MAVSDKDrone]):
 
@@ -1297,8 +1297,6 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
     def prettify_identifier(cls, base_identifier, extra_info) -> str:
         vendor_name, model_name = extra_info.split(".")
         return f"Camera with identifier {base_identifier}: Component ID {base_identifier}, Vendor {vendor_name}, Model {model_name}"
-
-    # TODO: Everything below this
 
     async def start(self):
         capture_info_task = asyncio.create_task(self._capture_info_updates())
