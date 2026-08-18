@@ -36,7 +36,7 @@ async def test_stream(dm: dronemanager.core.DroneManager, video_stream_source: T
     stream = getattr(dm, "stream", None)
     assert stream is not None
     stream.add_callback(checker._img_callback)
-    await stream.display()
+    # await stream.display()  # Doesn't work, on headless runners.
     await stream.start_stream()
     await asyncio.sleep(stream_test_duration)
 

@@ -156,6 +156,11 @@ class StreamPlugin(Plugin):
                     if frame is not None and self.display_stream:
                         # Display window title includes plugin name
                         cv2.imshow(f"Stream ({self.name})", frame)
+                        # 4. Handle UI events without blocking asyncio
+                        # waitKey(1) processes GUI events. We assume this runs on Main Thread.
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            self.running = False
+                            break
 
                     for callback in self.callbacks:
                         try:
@@ -163,12 +168,6 @@ class StreamPlugin(Plugin):
                         except Exception as e:
                             self.logger.error(f"Couldn't process stream callback {callback}! See log for details.")
                             self.logger.debug(repr(e), exc_info=True)
-
-                    # 4. Handle UI events without blocking asyncio
-                    # waitKey(1) processes GUI events. We assume this runs on Main Thread.
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        self.running = False
-                        break
 
                     # Yield control to allow other DroneManager tasks to run
                     await asyncio.sleep(0)
