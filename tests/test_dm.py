@@ -56,19 +56,19 @@ def test_heading_gps():
 def test_offset_gps():
     """Test gps offsetting function."""
     new_point = offset_from_gps([0, 0, 0], [0, 0, 100], [1, 1, 200])
-    assert abs(new_point[0] - 1) < 1e6 and abs(new_point[1] - 1) < 1e6 and abs(new_point[2] - 100) < 1e6
-    new_point = offset_from_gps([89.9, 0, 0], [0, 0, 100], [1, 0, 200])
-    assert abs(new_point[0] - 89.1) < 1e6 and abs(new_point[1] % 180 - 180) < 1e6 and abs(new_point[2] - 100) < 1e6
+    assert abs(new_point[0] - 1) < 1e-6 and abs(new_point[1] - 1) < 1e-6 and abs(new_point[2] - 100) < 1e-6
+    new_point = offset_from_gps([89.9, 1, 0], [0, 0, 100], [1, 0, 200])
+    assert abs(new_point[0] - 89.1) < 1e-6 and abs(new_point[1] - 181) < 1e-6 and abs(new_point[2] - 100) < 1e-6
 
 
 def test_ned_from_gps():
     """Test computing NED distances from GPS coordinates."""
     ned = ned_from_gps([0, 0, 0], [1, 1, 100])
-    assert abs(ned[0] - 111100)/111100 < 1e6 and abs(ned[1] - 111100)/111100 < 1e6 and abs(ned[2] - 100) < 1e6
-    ned = ned_from_gps([45, 0, 0], [46, 1, 100])
-    assert abs(ned[0] - 78567)/78567 < 1e6 and abs(ned[1] - 111100)/111100 < 1e6 and abs(ned[2] - 100) < 1e6
-    ned = ned_from_gps([75, 0, 0], [76, 1, 100])
-    assert abs(ned[0] - 28758)/28758 < 1e6 and abs(ned[1] - 111100)/111100 < 1e6 and abs(ned[2] - 100) < 1e6
+    assert abs(ned[0] - 111139)/111139 < 1e-3 and abs(ned[1] - 111139)/111139 < 1e-3 and abs(ned[2] - 100) < 1e-6
+    ned = ned_from_gps([45, 0, 0], [45.1, 0.1, 100])
+    assert abs(ned[0] - 11113.9)/11113.9 < 1e-2 and abs(ned[1] - 7862.67)/7862.67 < 1e-2 and abs(ned[2] - 100) < 1e-6
+    ned = ned_from_gps([75, 0, 0], [75.1, 0.1, 100])
+    assert abs(ned[0] - 11113.9)/11113.9 < 1e-2 and abs(ned[1] - 2877.94)/2877.94 < 1e-2 and abs(ned[2] - 100) < 1e-6
 
 
 def test_free_port():
