@@ -72,8 +72,8 @@ asyncio_mode = "auto"
 
 [tool.coverage.report]
 omit = [
-    "src/dronemanager/plugins/NatNet/*",
-    "src/dronemanager/scripts/*"
+    "*/dronemanager/plugins/NatNet/*",
+    "*/dronemanager/scripts/*"
 ]
 fail_under = 80
 
