@@ -1,6 +1,9 @@
 """Tests for the optitrack plugin."""
+from typing import AsyncGenerator, Any
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
+from unittest.mock import Mock, patch
 
 from dronemanager.core import DroneManager
 from dronemanager.plugins.optitrack import CoordinateConversion
@@ -85,12 +88,90 @@ def _test_conversion(conversion: CoordinateConversion,
     assert rot_e < 1e-6, "Rotation conversion error too large!"
 
 
-async def test_optitrack_plugin(dm: DroneManager):
+@pytest.fixture
+async def dm_with_optitrack_mock(dm: DroneManager) -> AsyncGenerator[tuple[DroneManager, Mock], Any]:
+    """Create a DroneManager instance with the optitrack plugin already loaded
+
+    Args:
+        dm:
+
+    Returns:
+
+    """
+    with patch("dronemanager.plugins.optitrack.NatNetClient") as NatNetMock:
+        await dm.load_plugin("optitrack")
+        client = NatNetMock.return_value
+        out = dm, client
+        yield out
+
+
+async def test_optitrack_natnet_run_failure(dm_with_optitrack_mock):
     """Tests for the full optitrack plugin.
 
     Args:
-        dm: The DroneManager instance.
+        dm_with_optitrack_mock:
+
+    Returns:
+
     """
-    # TODO: Mock NatNet and MAVSDK, or maybe drone?
-    res = await dm.load_plugin("optitrack")
-    assert res is not None
+    dm, client = dm_with_optitrack_mock
+    optitrack = getattr(dm, "optitrack")
+
+    # Test run not working
+    client.run.return_value = False
+    res = await optitrack.connect_server(remote="127.0.0.1", local="127.0.0.1")
+    assert res is False
+    assert optitrack.client is None
+    client.shutdown.assert_called_once()
+
+
+async def test_optitrack_natnet_no_server(dm_with_optitrack_mock):
+    """Tests for the full optitrack plugin.
+
+    Args:
+        dm_with_optitrack_mock:
+
+    Returns:
+
+    """
+    dm, client = dm_with_optitrack_mock
+    optitrack = getattr(dm, "optitrack")
+
+    # Test run not working
+    client.run.return_value = True
+    client.connected.return_value = False
+    res = await optitrack.connect_server(remote="127.0.0.1", local="127.0.0.1")
+    assert res is False
+    assert optitrack.client is None
+    client.shutdown.assert_called_once()
+
+
+async def test_optitrack_natnet_exception(dm_with_optitrack_mock):
+    """Tests for the full optitrack plugin.
+
+    Args:
+        dm_with_optitrack_mock:
+
+    Returns:
+
+    """
+    dm, client = dm_with_optitrack_mock
+    optitrack = getattr(dm, "optitrack")
+
+    # Testing run exception
+    client.run.side_effect = ConnectionResetError("Test exception, please ignore.")
+    res = await optitrack.connect_server(remote="127.0.0.1", local="127.0.0.1")
+    assert res is False
+    assert optitrack.client is None
+    client.shutdown.assert_called_once()
+
+
+async def test_optitrack_connect(dm_with_optitrack_mock):
+    dm, client = dm_with_optitrack_mock
+    optitrack = getattr(dm, "optitrack")
+
+    # Test run not working
+    client.run.return_value = True
+    res = await optitrack.connect_server(remote="127.0.0.1", local="127.0.0.1")
+    assert res is True
+    assert optitrack.client is client

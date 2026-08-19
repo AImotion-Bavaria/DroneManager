@@ -18,15 +18,16 @@ pygame.init()
 
 
 @pytest.fixture
-def dm() -> DroneManager:
+async def dm() -> AsyncGenerator[DroneManager, Any]:
     """Create DroneManager object for tests.
 
-    Returns:
+    Yields:
         A DroneManager instance.
     """
     drone_type = DroneMAVSDK
     dm = DroneManager(drone_type, log_to_console=False)
-    return dm
+    yield dm
+    await dm.close()
 
 
 class TCPStreamer:

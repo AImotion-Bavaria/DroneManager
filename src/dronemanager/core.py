@@ -99,7 +99,7 @@ class DroneManager:
 
     """
 
-    def __init__(self, logger=None, log_to_console=True, console_log_level=logging.INFO):
+    def __init__(self, logger: logging.Logger | None = None, log_to_console: bool = True, console_log_level = logging.INFO):
         self.drones: dict[str, Drone] = {}
         # self.drones acts as the list/manager of connected drones, any function that writes or deletes items should
         # protect those writes/deletes with this lock. Read only functions can ignore it.
@@ -117,6 +117,8 @@ class DroneManager:
         self.system_id = self.config.mav_system_id
         self.component_id = self.config.mav_component_id
 
+        self.logging_handlers = set()
+
         if logger is None:
             self.logger = logging.getLogger("Manager")
             self.logger.setLevel(logging.DEBUG)
@@ -126,6 +128,7 @@ class DroneManager:
             file_handler = logging.FileHandler(os.path.join(LOG_DIR, filename))
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.add(file_handler)
             self.logger.addHandler(file_handler)
         else:
             self.logger = logger
@@ -134,6 +137,7 @@ class DroneManager:
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setLevel(console_log_level)
             console_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.add(console_handler)
             self.logger.addHandler(console_handler)
 
         self.comm_protocols: dict[str, DroneComProtocol] = {}
@@ -510,15 +514,6 @@ class DroneManager:
                                                                  f"Drones {names} waiting", delay,
                                                                  schedule=schedule)
 
-    async def orbit(self, name, radius, velocity, center_lat, center_long, amsl):
-        try:
-            await self.drones[name].orbit(radius, velocity, center_lat, center_long, amsl)
-            self.logger.info(f"{name} flying in a circle.")
-        except KeyError:
-            self.logger.warning(f"No drone named {name}!")
-        except Exception as e:
-            self.logger.error(repr(e))
-
     async def action_stop(self, names):
         if not names:
             self.logger.info("Stopping all drones!")
@@ -579,6 +574,8 @@ class DroneManager:
         for comm_protocol in self.comm_protocols.values():
             await comm_protocol.close()
         await self.plugin_loader.close()
+        for handler in self.logging_handlers:
+            self.logger.removeHandler(handler)
 
 # PLUGINS ##############################################################################################################
 
