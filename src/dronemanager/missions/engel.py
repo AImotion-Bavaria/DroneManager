@@ -561,8 +561,10 @@ class ENGELDataMission(Mission):
                 self.camera = None
                 await self.dm.gimbal.remove_gimbal(name)
                 await self.dm.camera.remove_camera(name)
+                return True
             except KeyError:
                 self.logger.error(f"No drone named {name}")
+                return False
 
     async def mission_ready(self, drone: str):
         return drone in self.drones

@@ -4,11 +4,11 @@ Sometimes useful for testing, as output and control are bundled in the interface
 "scripts" folder. There is no safety or verification of the scripts at all.
 """
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
 import logging
 import os
 import pathlib
 import subprocess
-from concurrent.futures import ProcessPoolExecutor
 from subprocess import CompletedProcess, CalledProcessError
 
 import dronemanager.core

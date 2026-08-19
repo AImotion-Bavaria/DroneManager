@@ -1,6 +1,6 @@
 """Module to test the terminal interface."""
-from dronemanager.core import DroneManager
 from dronemanager.app import DroneApp
+from dronemanager.core import DroneManager
 from dronemanager.drone import DroneMAVSDK
 
 

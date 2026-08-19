@@ -1,7 +1,7 @@
 """Tests for streaming plugin."""
 import asyncio
-
 import logging
+
 from tests.conftest import TCPStreamer
 import dronemanager.core
 

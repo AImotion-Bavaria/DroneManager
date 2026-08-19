@@ -1,7 +1,7 @@
 """Module to test core DroneManager functionality."""
+from dronemanager.core import DMConfig, DroneManager
 from dronemanager.utils import get_config, heading_ned, heading_gps, offset_from_gps, ned_from_gps, get_free_port, \
     parse_address
-from dronemanager.core import DMConfig, DroneManager
 
 
 def test_config():

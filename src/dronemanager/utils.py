@@ -17,6 +17,7 @@ from platformdirs import user_documents_path
 import socket
 from urllib.parse import urlparse
 
+
 COMMON_FORMATTER = logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)s %(name)s - %(message)s', datefmt="%H:%M:%S")
 """The common formatter string for the loggers.
 

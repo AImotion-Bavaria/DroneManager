@@ -81,7 +81,7 @@ class Plugin(abc.ABC):
             self.running_tasks.add(asyncio.create_task(coro))
 
     async def start(self):
-        """Starts the plug.
+        """Starts the plugin.
 
         By default, only starts declared background functions.
         """

@@ -1,18 +1,16 @@
 """Tests for the optitrack plugin."""
 import asyncio
-from typing import AsyncGenerator, Any
+import logging
 import numpy as np
-from scipy.spatial.transform import Rotation
-
 import pytest
+from scipy.spatial.transform import Rotation
+from typing import AsyncGenerator, Any
 from unittest.mock import Mock, patch
 
-from dronemanager.plugins.NatNet.MoCapData import generate_mocap_data
-
 from dronemanager.core import DroneManager
-from dronemanager.plugins.optitrack import CoordinateConversion, MocapError, MocapResult
-
-import logging
+from dronemanager.drone import MocapError
+from dronemanager.plugins.NatNet.MoCapData import generate_mocap_data
+from dronemanager.plugins.optitrack import CoordinateConversion
 
 
 def test_coordinate_conversion():
@@ -234,15 +232,15 @@ async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager,
     await optitrack.add_drone("mock", 0)
     assert len(optitrack._drone_id_mapping) == 1
     frame_counter = do_callback(frame_counter)
-    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing
-    mock_drone_connected.system.mocap.set_vision_position_estimate.assert_called_once()
+    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
+    mock_drone_connected.send_external_tracking_data.assert_called_once()
 
     # Remove drone and check callback
     await optitrack.remove_drone("mock")
     assert len(optitrack._drone_id_mapping) == 0
     frame_counter = do_callback(frame_counter)
-    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing
-    mock_drone_connected.system.mocap.set_vision_position_estimate.assert_called_once()
+    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
+    mock_drone_connected.send_external_tracking_data.assert_called_once()
 
 
 async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone_connected: Mock):
@@ -278,10 +276,10 @@ async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock
 
     # Test Mocap errors.
     mock_drone_connected.system.mocap.set_vision_position_estimate.side_effect = \
-        MocapError(MocapResult.Result.CONNECTION_ERROR, "Dummy")
+        MocapError(2, "Test exception, please ignore")
     frame_counter = do_callback(frame_counter)
-    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing
-    assert optitrack._err_count[0] == 1
+    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
+    assert optitrack._err_count == 1
 
     # Remove the drone and test that callback removes it properly.
     await dm.disconnect("mock")

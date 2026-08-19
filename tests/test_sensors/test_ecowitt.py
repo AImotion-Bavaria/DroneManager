@@ -1,10 +1,10 @@
 """Tests for the EcoWitt sensor plugin."""
+import json
+import logging
+import responses
+
 from dronemanager.core import DroneManager
 from dronemanager.sensors.ecowitt import WeatherData
-import json
-
-import responses
-import logging
 
 
 EXAMPLE_JSON = json.loads('{ "common_list": ['

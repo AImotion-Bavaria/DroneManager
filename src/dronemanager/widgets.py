@@ -1,18 +1,16 @@
 """Custom textual widgets."""
-import asyncio
-import math
 import queue
 from queue import Queue
 import argparse
-from logging import LogRecord
-
-from textual.widgets import Input, Log, Static
-from dronemanager.drone import FlightMode, FixType, Drone
-from textual.binding import Binding
+import asyncio
+import logging
+import math
 from rich.text import Text
+from textual.binding import Binding
+from textual.widgets import Input, Log, Static
 from typing import IO
 
-import logging
+from dronemanager.drone import FlightMode, FixType, Drone
 
 
 class ArgumentParserError(Exception):
@@ -429,9 +427,9 @@ class TextualLogHandler(logging.Handler):
         super().__init__(*args, **kwargs)
         self.log_textual: Log = log_textual  #: The textual Log object to which we write.
         self._maxsize: int = 10000  #: The maximum size of the log record queue
-        self._queue: Queue[LogRecord] = Queue(self._maxsize)  #: The queue object used to store log records.
+        self._queue: Queue[logging.LogRecord] = Queue(self._maxsize)  #: The queue object used to store log records.
 
-    def emit(self, record: LogRecord):
+    def emit(self, record: logging.LogRecord):
         """Store the record in the queue.
 
         Args:

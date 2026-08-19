@@ -1,13 +1,13 @@
 """Module for a basic stream receiving plugin using TCP and OpenCV."""
 import asyncio
 import logging
-import struct
-from collections.abc import Callable
-
-import cv2
 import numpy as np
+import struct
+from typing import Callable
+
 from dronemanager.plugin import Plugin
 import dronemanager.core
+import cv2
 
 
 class StreamPlugin(Plugin):

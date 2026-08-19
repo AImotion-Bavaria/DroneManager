@@ -112,7 +112,7 @@ class UAMMission(Mission):
         self.poi_position = [-2, 0, -self.flight_altitude]  # in NED, altitude is just for convenient distance check.
         self.poi_tolerance = 1.2
         self.update_rate = 5  # Mission state is checked and progressed this often per second.
-        self.fence = RectLocalFence(*self.flight_area.bounding_box(), safety_level=3)
+        self.fence = RectLocalFence(*self.flight_area.bounding_box, safety_level=3)
 
         # SingleSearch Parameters
         self.single_search_forward_leg = 1  # in meters

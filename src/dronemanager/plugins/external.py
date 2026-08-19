@@ -21,20 +21,6 @@ MIN_FREQUENCY = 1
 MAX_DURATION = 60
 
 
-class UDPClient:
-
-    def __init__(self, ip, port, frequency, duration):
-        self.start_time = time.time()
-        self.ip = ip
-        self.port = port
-        self.frequency = frequency
-        self.duration = duration
-
-    def __str__(self):
-        return (f"Client: {self.ip}:{self.port}, {self.frequency} Hz, "
-                f"{self.start_time + self.duration - time.time()}s remaining.")
-
-
 class UDPPlugin(Plugin):
     """Communication happens over port 31659. A client will send a json message with the desired frequency and duration
     (in seconds) to this port and the server starts answering. Frequency is capped between 1/60 and 20Hz.
@@ -133,7 +119,7 @@ class UDPPlugin(Plugin):
                 self.logger.debug(repr(e), exc_info=True)
                 self.logger.debug("Dummy")
 
-    async def _client_sender(self, client: UDPClient):
+    async def _client_sender(self, client: "UDPClient"):
         """Send data to the client.
         """
         # TODO: If we ever have a larger number of clients we should cache the jsons somehow
@@ -198,13 +184,13 @@ class UDPPlugin(Plugin):
             for mission_name in self.dm.mission.loaded:
                 mission = getattr(self.dm, mission_name)
                 mission_data[mission.PREFIX] = {
-                    "flightarea": mission.flight_area.bounding_box() if mission.flight_area is not None else None,
+                    "flight-area": mission.flight_area.bounding_box if mission.flight_area is not None else None,
                     "stage": mission.current_stage.name if mission.current_stage is not None else None,
                     "drones": list(mission.drones.keys()),
                 }
                 for info, item in mission.additional_info.items():
                     try:
-                        mission_data[mission.PREFIX][info] = item
+                        mission_data[mission.PREFIX][info] = str(item)
                     except Exception as e:
                         self.logger.warning("Couldn't collect all mission information to send out due to an exception!")
                         self.logger.debug(repr(e), exc_info=True)
@@ -218,3 +204,17 @@ class UDPPlugin(Plugin):
         except Exception as e:
             self.logger.warning("Exception sending out data! Check the log for details.")
             self.logger.debug(repr(e), exc_info=True)
+
+
+class UDPClient:
+
+    def __init__(self, ip, port, frequency, duration):
+        self.start_time = time.time()
+        self.ip = ip
+        self.port = port
+        self.frequency = frequency
+        self.duration = duration
+
+    def __str__(self):
+        return (f"Client: {self.ip}:{self.port}, {self.frequency} Hz, "
+                f"{self.start_time + self.duration - time.time()}s remaining.")

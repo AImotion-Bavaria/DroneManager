@@ -32,12 +32,17 @@ class Sensor(Plugin, abc.ABC):
 
     Implementing subclasses should call :py:meth:`__init__` at the start of their constructors.
 
-    The key functions are:
+    Key functions are:
 
     * :py:meth:`connect`: Connect to the sensor, for example through UDP.
     * :py:meth:`get_data`: Query the sensor for current data.
     * :py:meth:`disconnect`: Disconnect from the sensor. This should not shut down the sensor plugin itself.
     * :py:meth:`status`: Should write status information to the logger.
+
+    Key attributes are:
+
+    * :py:attr:`last_data`: A copy of the last received data object for caching purposes. Functions or modules may
+      access this copy instead of requesting new data if timeliness is not important or requesting data is expensive.
 
     Like normal plugins they can define dependencies.
     """
@@ -55,7 +60,7 @@ class Sensor(Plugin, abc.ABC):
         Args:
             dm: The associated DroneManager instance
             logger: The logger for output and errors.
-            name: The name of the sensor plugin.
+            name: The name of the sensor plugin. Takes the place of the prefix for CLI commands.
         """
         super().__init__(dm, logger, name)
         self.PREFIX: str = name  # Set the prefix to the name attribute.
@@ -154,10 +159,11 @@ class SensorPlugin(MetaPlugin):
 
     This plugin has three CLI commands:
 
-    * :py:meth:`load`: Load a new sensor, optionally with a custom name to have multiple sensors of the same type
-    * :py:meth:`unload`: Unload a sensor.
-    * :py:meth:`status`: Log information about currently loaded sensors, by calling
-      :py:meth:`Sensor.status` for each connected sensor.
+    * "load" - :py:meth:`load`: Load a new sensor, optionally with a custom name to have multiple sensors of the same
+      type.
+    * "unload" - :py:meth:`unload`: Unload, i.e. close a sensor.
+    * "status" - :py:meth:`status`: Log information about currently loaded sensors, by calling
+      :py:meth:`Sensor.status>` for each connected sensor. Also lists sensors that could be loaded.
     """
 
     EXAMPLE_DIR: pathlib.Path = SRC_DIR.joinpath("sensors")
@@ -192,7 +198,7 @@ class SensorPlugin(MetaPlugin):
         """
         super().__init__(dm, logger, name)
         #: Available cli commands.
-        self.cli_commands = {
+        self.cli_commands: dict[str, Callable] = {
             "load": self.load,
             "unload": self.unload,
             "status": self.status,

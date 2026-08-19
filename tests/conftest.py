@@ -1,19 +1,18 @@
 """Module for pytest fixtures used by many tests."""
 import asyncio
-from typing import AsyncGenerator, Any
-from unittest.mock import Mock, AsyncMock
-
-import cv2
+import logging
 import numpy as np
 import pytest
 import pygame
 import struct
+from typing import AsyncGenerator, Any
+from unittest.mock import Mock, AsyncMock
+
+import cv2
+from mavsdk import System
 
 from dronemanager.core import DroneManager
 from dronemanager.drone import DroneMAVSDK
-from mavsdk import System
-
-import logging
 
 
 pygame.init()
@@ -113,7 +112,7 @@ def mock_drone_object() -> Mock:
     mockdrone.system = Mock(spec=System)
 
     # Optitrack mocks
-    mockdrone.system.mocap = Mock()
+    mockdrone.send_external_tracking_data = AsyncMock()
     mockdrone.system.mocap.set_vision_position_estimate = AsyncMock()
 
     return mockdrone
