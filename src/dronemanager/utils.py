@@ -60,7 +60,7 @@ Currently only used for camera definition information.
 """
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-CONFIG_FILE = DM_INSTALL_DIR.joinpath("config.json")  #Path(__file__).parent.parent.parent.joinpath("config.json")
+_CONFIG_FILE = DM_INSTALL_DIR.joinpath("config.json")
 """ Location of the configuration file.
 
 :meta hide-value:
@@ -75,17 +75,17 @@ def get_config() -> pathlib.Path:
     Returns:
         The path to the config file.
     """
-    if not CONFIG_FILE.exists():
+    if not _CONFIG_FILE.exists():
         default_config = files("dronemanager").joinpath(
             "resources/config.json"
         )
 
-        CONFIG_FILE.write_text(
+        _CONFIG_FILE.write_text(
             default_config.read_text(),
             encoding="utf-8",
         )
 
-    return CONFIG_FILE
+    return _CONFIG_FILE
 
 
 def dist_ned(pos1: np.ndarray, pos2: np.ndarray) -> float:

@@ -1,8 +1,10 @@
+import argparse
 import asyncio
 from collections.abc import Callable
 import datetime
 import inspect
 import os
+import pathlib
 import shlex
 import types
 import typing
@@ -10,7 +12,7 @@ import typing
 import dronemanager
 from dronemanager.core import DroneManager
 from dronemanager.drone import Drone
-from dronemanager.utils import COMMON_FORMATTER, coroutine_awaiter, LOG_DIR, CONFIG_FILE, cancel_running_tasks
+from dronemanager.utils import COMMON_FORMATTER, coroutine_awaiter, LOG_DIR, get_config, cancel_running_tasks
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 
 import textual.css.query
@@ -479,7 +481,7 @@ class CommandScreen(Screen):
                 elif command == "logs":
                     self.logger.info(LOG_DIR)
                 elif command == "config":
-                    self.logger.info(CONFIG_FILE)
+                    self.logger.info(get_config())
                 self.app.running_tasks.add(tmp)
                 self.app._awaiter_tasks.add(asyncio.create_task(coroutine_awaiter(tmp, self.logger)))
         except Exception as e:
@@ -857,6 +859,14 @@ def main():
         stop_cpu_checker.set()
         profile_process.join()
     else:
+        script_parser = argparse.ArgumentParser()
+        script_parser.add_argument("--config", type=str, help="Path to the config file.", required=False)
+        args = script_parser.parse_args()
+
+        if args.config is not None:
+            dronemanager.utils._CONFIG_FILE = pathlib.Path(args.config)
+            print("Using non-standard config location.")
+
         drone_manager = DroneManager(log_to_console=False)
         app = DroneApp(drone_manager, logger=drone_manager.logger)
         app.run()
