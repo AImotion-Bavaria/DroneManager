@@ -23,8 +23,8 @@ class ScriptsPlugin(Plugin):
 
     This plugin has only one CLI command:
 
-    * :py:meth:`execute_script`: Run the given script file. The file can be a path as well, but it must lead to a file
-      and be relative to the "scripts" directory.
+    * "execute" - :py:meth:`execute_script`: Run the given script file. The file can be a path as well, but it must
+      lead to a file and be relative to the "scripts" directory.
     """
 
     PREFIX = "script"

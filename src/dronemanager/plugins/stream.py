@@ -18,9 +18,9 @@ class StreamPlugin(Plugin):
 
     This plugin has three CLI commands:
 
-    * :py:meth:`start`: Connect to and start processing a stream.
-    * :py:meth:`display`: Toggles a live display of the images from the stream in a separate window.
-    * :py:meth:`stop`: Close the stream.
+    * "start" - :py:meth:`start_stream`: Connect to and start processing a stream.
+    * "display" - :py:meth:`display`: Toggles a live display of the images from the stream in a separate window.
+    * "stop" - :py:meth:`stop_stream`: Close the stream.
     """
 
     PREFIX = "stream"
@@ -38,15 +38,15 @@ class StreamPlugin(Plugin):
             port: Default Port, can be set via config.json 'plugin_settings'.
         """
         super().__init__(dm, logger, name)
-        self.default_ip = ip
-        self.default_port = int(port)
-        self.running = False
-        self.stream_task = None
-        self.display_stream = False
+        self.default_ip: str = ip  #: The ip used as the default for :py:meth:`start_stream`.
+        self.default_port: int = int(port)  #: The port used as the default for :py:meth:`start_stream`.
+        self.running: bool = False
+        self.stream_task: asyncio.Task | None = None
+        self.display_stream: bool = False
         self.callbacks: set[Callable] = set()
 
-        # Register CLI commands
-        self.cli_commands = {
+        #: Available cli commands.
+        self.cli_commands: dict[str, Callable] = {
             "start": self.start_stream,
             "display": self.display,
             "stop": self.stop_stream

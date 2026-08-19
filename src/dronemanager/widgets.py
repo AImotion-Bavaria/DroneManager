@@ -133,7 +133,7 @@ class InputWithHistory(Input):
         self.history_cursor: int = -1  #: Shows where in the history we are.
         self.rolling_zero: int = 0  #: The current position of the "zeroth" entry in the list.
         self.history_max_length: int = 50  #: The maximum size of the history.
-        self._submitted_historical = False  #: Whether the last submitted entry came from the history.
+        self._submitted_historical: bool = False  #: Whether the last submitted entry came from the history.
 
     @property
     def _current_history_cursor(self) -> int:

@@ -104,7 +104,7 @@ class Sensor(Plugin, abc.ABC):
             **kwargs: Connection kwargs, stored for reconnect.
 
         Returns:
-            Dummy return value.
+            True, as a dummy return value.
         """
         self.connect_args = args
         self.connect_kwargs = kwargs
