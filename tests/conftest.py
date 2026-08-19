@@ -1,6 +1,7 @@
 """Module for pytest fixtures used by many tests."""
 import asyncio
 from typing import AsyncGenerator, Any
+from unittest.mock import Mock, AsyncMock
 
 import cv2
 import numpy as np
@@ -10,6 +11,7 @@ import struct
 
 from dronemanager.core import DroneManager
 from dronemanager.drone import DroneMAVSDK
+from mavsdk import System
 
 import logging
 
@@ -93,3 +95,40 @@ async def video_stream_source() -> AsyncGenerator[TCPStreamer, Any]:
     task = asyncio.create_task(server.start())
     yield server
     task.cancel()
+
+
+@pytest.fixture
+def mock_drone_object() -> Mock:
+    """Fixture for a mock drone object.
+
+    Mocks a bunch of the individual components
+
+    Returns:
+        A Mock object specced to and wrapping DroneMAVSDK
+    """
+    # Core mocks
+    mockdrone = Mock(spec=DroneMAVSDK)
+    mockdrone.disconnect = AsyncMock()
+    mockdrone.stop_execution = AsyncMock()
+    mockdrone.system = Mock(spec=System)
+
+    # Optitrack mocks
+    mockdrone.system.mocap = Mock()
+    mockdrone.system.mocap.set_vision_position_estimate = AsyncMock()
+
+    return mockdrone
+
+
+@pytest.fixture
+def mock_drone_connected(mock_drone_object: Mock) -> Mock:
+    """Fixture for a connected mock drone object.
+
+    Args:
+        mock_drone_object: A mock object that has not been "instantiated".
+
+    Returns:
+        A Mock object specced to and wrapping DroneMAVSDK
+    """
+    # Core mocks
+    mock_drone_object.is_connected = True
+    return mock_drone_object

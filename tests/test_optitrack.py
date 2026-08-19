@@ -1,12 +1,16 @@
 """Tests for the optitrack plugin."""
+import asyncio
 from typing import AsyncGenerator, Any
 import numpy as np
-import pytest
 from scipy.spatial.transform import Rotation
+
+import pytest
 from unittest.mock import Mock, patch
 
+from dronemanager.plugins.NatNet.MoCapData import generate_mocap_data
+
 from dronemanager.core import DroneManager
-from dronemanager.plugins.optitrack import CoordinateConversion
+from dronemanager.plugins.optitrack import CoordinateConversion, MocapError, MocapResult
 
 import logging
 
@@ -90,13 +94,13 @@ def _test_conversion(conversion: CoordinateConversion,
 
 @pytest.fixture
 async def dm_with_optitrack_mock(dm: DroneManager) -> AsyncGenerator[tuple[DroneManager, Mock], Any]:
-    """Create a DroneManager instance with the optitrack plugin already loaded
+    """Create a DroneManager instance with the optitrack plugin already loaded.
 
     Args:
-        dm:
+        dm: A plain DroneManager instance.
 
-    Returns:
-
+    Yields:
+        A DroneManager instance with loaded optitrack plugin and the mocked NatNetClient object.
     """
     with patch("dronemanager.plugins.optitrack.NatNetClient") as NatNetMock:
         await dm.load_plugin("optitrack")
@@ -105,14 +109,13 @@ async def dm_with_optitrack_mock(dm: DroneManager) -> AsyncGenerator[tuple[Drone
         yield out
 
 
-async def test_optitrack_natnet_run_failure(dm_with_optitrack_mock):
-    """Tests for the full optitrack plugin.
+async def test_optitrack_natnet_run_failure(dm_with_optitrack_mock: tuple[DroneManager, Mock]):
+    """Tests for the server connection procedure optitrack plugin.
+
+    Tests "run" function failure.
 
     Args:
-        dm_with_optitrack_mock:
-
-    Returns:
-
+        dm_with_optitrack_mock: The test DroneManager instance.
     """
     dm, client = dm_with_optitrack_mock
     optitrack = getattr(dm, "optitrack")
@@ -125,14 +128,13 @@ async def test_optitrack_natnet_run_failure(dm_with_optitrack_mock):
     client.shutdown.assert_called_once()
 
 
-async def test_optitrack_natnet_no_server(dm_with_optitrack_mock):
-    """Tests for the full optitrack plugin.
+async def test_optitrack_natnet_no_server(dm_with_optitrack_mock: tuple[DroneManager, Mock]):
+    """Tests for the server connection procedure optitrack plugin.
+
+    Tests behaviour if there is no server to connect to.
 
     Args:
-        dm_with_optitrack_mock:
-
-    Returns:
-
+        dm_with_optitrack_mock: The test DroneManager instance.
     """
     dm, client = dm_with_optitrack_mock
     optitrack = getattr(dm, "optitrack")
@@ -146,14 +148,13 @@ async def test_optitrack_natnet_no_server(dm_with_optitrack_mock):
     client.shutdown.assert_called_once()
 
 
-async def test_optitrack_natnet_exception(dm_with_optitrack_mock):
-    """Tests for the full optitrack plugin.
+async def test_optitrack_natnet_exception(dm_with_optitrack_mock: tuple[DroneManager, Mock]):
+    """Tests for the server connection procedure optitrack plugin.
+
+    Tests a ConnectionResetException during connection.
 
     Args:
-        dm_with_optitrack_mock:
-
-    Returns:
-
+        dm_with_optitrack_mock: The test DroneManager instance.
     """
     dm, client = dm_with_optitrack_mock
     optitrack = getattr(dm, "optitrack")
@@ -166,7 +167,14 @@ async def test_optitrack_natnet_exception(dm_with_optitrack_mock):
     client.shutdown.assert_called_once()
 
 
-async def test_optitrack_connect(dm_with_optitrack_mock):
+async def test_optitrack_connect(dm_with_optitrack_mock: tuple[DroneManager, Mock]):
+    """Tests for the server connection procedure optitrack plugin.
+
+    Tests a successful connect.
+
+    Args:
+        dm_with_optitrack_mock: The test DroneManager instance.
+    """
     dm, client = dm_with_optitrack_mock
     optitrack = getattr(dm, "optitrack")
 
@@ -175,3 +183,109 @@ async def test_optitrack_connect(dm_with_optitrack_mock):
     res = await optitrack.connect_server(remote="127.0.0.1", local="127.0.0.1")
     assert res is True
     assert optitrack.client is client
+
+
+async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone_connected: Mock):
+    """Tests core functionality around processing Motive data.
+
+    Args:
+        dm_with_optitrack_mock: The DroneManager instance with loaded optitrack plugin.
+        mock_drone_connected: The mocked drone object to be used during the tests.
+    """
+    dm, client = dm_with_optitrack_mock
+    optitrack = getattr(dm, "optitrack")
+
+    # Set specific coordinate conversion to not get messed up by config.
+    await optitrack.set_coordinates_body("x", "z", "-y")
+    await optitrack.set_coordinates_world("z", "-x", "-y")
+
+    dm.drones["mock"] = mock_drone_connected
+
+    assert len(optitrack.available_bodies) == 0
+    frame_counter = 0
+
+    def do_callback(frame_count: int) -> int:
+        """Do a single callback with dummy mocap data.
+
+        Args:
+            frame_count: Frame count.
+
+        Returns:
+            frame count incremented by one.
+        """
+        data_dict = {"mocap_data": generate_mocap_data(frame_count)}
+        frame_count += 1
+        # Callback without drones
+        optitrack._new_frame_callback(data_dict)
+        return frame_count
+
+    frame_counter = do_callback(frame_counter)
+    assert len(optitrack.available_bodies) == 3
+
+    # Test the check-conv function and check that conversion are happening properly from mocap data.
+    await optitrack.check_conv(0)
+    position, rotation = optitrack.available_bodies[0]
+    target_pos = np.asarray([position[2], -position[0], -position[1]])
+    target_rotation = np.asarray([-180, 0, -90])
+    out_pos, out_rot = optitrack.coordinate_transform.convert_quat(position, rotation, out_sequence="xyz", degrees=True)
+    assert np.max(np.abs(out_pos - target_pos)) < 1e-6 and np.max(np.abs(out_rot - target_rotation)) < 1e-6
+
+    # Callback with drone
+    await optitrack.add_drone("mock", 0)
+    assert len(optitrack._drone_id_mapping) == 1
+    frame_counter = do_callback(frame_counter)
+    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing
+    mock_drone_connected.system.mocap.set_vision_position_estimate.assert_called_once()
+
+    # Remove drone and check callback
+    await optitrack.remove_drone("mock")
+    assert len(optitrack._drone_id_mapping) == 0
+    frame_counter = do_callback(frame_counter)
+    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing
+    mock_drone_connected.system.mocap.set_vision_position_estimate.assert_called_once()
+
+
+async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone_connected: Mock):
+    """Tests assorted error handling components of the plugin.
+
+    Args:
+        dm_with_optitrack_mock: The DroneManager instance with loaded optitrack plugin.
+        mock_drone_connected: The mocked drone object to be used during the tests.
+    """
+    dm, client = dm_with_optitrack_mock
+    optitrack = getattr(dm, "optitrack")
+
+    dm.drones["mock"] = mock_drone_connected
+    frame_counter = 0
+
+    def do_callback(frame_count: int) -> int:
+        """Do a single callback with dummy mocap data.
+
+        Args:
+            frame_count: Frame count.
+
+        Returns:
+            frame count incremented by one.
+        """
+        data_dict = {"mocap_data": generate_mocap_data(frame_count)}
+        frame_count += 1
+        # Callback without drones
+        optitrack._new_frame_callback(data_dict)
+        return frame_count
+
+    frame_counter = do_callback(frame_counter)  # Do the callback once so we have tracks
+    await optitrack.add_drone("mock", 0)
+
+    # Test Mocap errors.
+    mock_drone_connected.system.mocap.set_vision_position_estimate.side_effect = \
+        MocapError(MocapResult.Result.CONNECTION_ERROR, "Dummy")
+    frame_counter = do_callback(frame_counter)
+    await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing
+    assert optitrack._err_count[0] == 1
+
+    # Remove the drone and test that callback removes it properly.
+    await dm.disconnect("mock")
+    assert len(optitrack._drone_id_mapping) == 1
+    frame_counter = do_callback(frame_counter)
+    await asyncio.sleep(0.1)
+    assert len(optitrack._drone_id_mapping) == 0
