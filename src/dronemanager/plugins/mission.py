@@ -291,7 +291,7 @@ class MissionPlugin(MetaPlugin):
         """
         super().__init__(dm, logger, name)
         #: Available CLI commands.
-        self.cli_commands = {
+        self.cli_commands: dict[str, Callable] = {
             "load": self.load,
             "unload": self.unload,
             "status": self.status,

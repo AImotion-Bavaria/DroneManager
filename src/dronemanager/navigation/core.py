@@ -151,10 +151,13 @@ class Fence(ABC):
     @property
     @abstractmethod
     def bounding_box(self) -> np.ndarray:
-        """Should return an axis aligned bounding box for other components to use.
+        """The axis aligned bounding box of the flight area.
 
         Output array should have shape (6,) and contain the limits as [north_lower, north_upper, east_lower,
         east_upper, down_lower, down_upper].
+
+        Returns:
+            The lower and upper limits for each axis.
         """
         pass
 

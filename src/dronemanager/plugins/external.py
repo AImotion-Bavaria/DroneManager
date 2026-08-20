@@ -1,29 +1,83 @@
-"""Plugins for communication to other software
+"""A plugin for generic communication with external components.
 
 Currently only features a basic UDP server which sends data on connected drones and running missions in a json format.
+The server listens on a fixed port for incoming requests from clients. Clients can request messages for a certain
+duration and at a certain frequency. If clients want to extend the duration, they can send another request before the
+duration expires and the duration will be extended. Clients can change their message frequency using the same method.
+
+Also contains a minimal example client.
+
+TODO: Example client documentation
 """
+import argparse
 import asyncio
-import select
-import threading
-import socket
 import errno
 import json
-import time
+import logging
 import math
+import select
+import socket
+import threading
+import time
 
+import dronemanager.core
 from dronemanager.plugin import Plugin
 from dronemanager.utils import coroutine_awaiter
 
 
-SERVER_PORT = 31659
-MAX_FREQUENCY = 100
-MIN_FREQUENCY = 1
-MAX_DURATION = 60
+DEFAULT_SERVER_PORT: int = 31659
+"""The default port on which the server is listening for incoming client connections."""
+
+DEFAULT_MAX_FREQUENCY: float = 100
+"""The default maximum message frequency in Hz that clients can request."""
+
+DEFAULT_MIN_FREQUENCY: float = 1
+"""The default minimum message frequency in Hz that clients can request."""
+
+DEFAULT_MAX_DURATION: float = 60
+"""The default maximum duration in seconds for which clients can request messages."""
+
+
+class _UDPClient:
+    """This class tracks properties for a single connected client."""
+
+    def __init__(self, ip: str, port: int, frequency: float, duration: float):
+        """Create the UDPClient object.
+
+        Args:
+            ip: The IP address of this client.
+            port: The port from which this client requested messages.
+            frequency: The requested message frequency for this client.
+            duration: The requested transmission duration for this client.
+        """
+        self.start_time: float = time.time()  #: The time this client connected.
+        self.ip = ip  #: The IP address of this client.
+        self.port = port  #: The port from which this client requested messages.
+        self.frequency = frequency  #: The requested message frequency for this client.
+        self.duration = duration  #: The requested transmission duration for this client.
+
+    def __str__(self) -> str:
+        """A nice string representation of a connected client.
+
+        Returns:
+            A pretty string.
+        """
+        return (f"Client: {self.ip}:{self.port}, {self.frequency} Hz, "
+                f"{self.start_time + self.duration - time.time()}s remaining.")
 
 
 class UDPPlugin(Plugin):
-    """Communication happens over port 31659. A client will send a json message with the desired frequency and duration
-    (in seconds) to this port and the server starts answering. Frequency is capped between 1/60 and 20Hz.
+    """A plugin for generic communication with external components using UDP and JSON.
+
+    On startup, launches a server listening on a fixed port for incoming requests from clients.
+    Clients can request messages for a certain duration and at a certain frequency by sending a JSON message to
+    the server. If clients want to extend the duration, they can send another request before the duration expires and
+    the duration will be extended. Clients can change their message frequency using the same method.
+
+    The fixed port, the maximum and minimum message frequency and the maximum duration for which clients can request
+    messages can be set in the configuration file, with defaults set in this module. Note that the maximum duration
+    is the duration per client message, clients can extend the duration indefinitely by sending a new request before
+    the old one expires.
 
     Example message from client::
 
@@ -32,12 +86,28 @@ class UDPPlugin(Plugin):
           "frequency": 5
         }
 
+    This plugin has one CLI command:
+
+    * "status" - :py:meth:`status`: Log information about currently connected clients.
     """
 
     PREFIX = "UDP"
+    """The prefix for the CLI commands, "UDP" by default."""
 
-    def __init__(self, dm, logger, name, server_port: int = SERVER_PORT, max_frequency: float = MAX_FREQUENCY,
-                 min_frequency: float = MIN_FREQUENCY, max_duration: float = MAX_DURATION):
+    def __init__(self, dm: dronemanager.core.DroneManager, logger: logging.Logger, name: str,
+                 server_port: int = DEFAULT_SERVER_PORT, max_frequency: float = DEFAULT_MAX_FREQUENCY,
+                 min_frequency: float = DEFAULT_MIN_FREQUENCY, max_duration: float = DEFAULT_MAX_DURATION):
+        """Create a UDPPlugin instance.
+
+        Args:
+            dm: The DroneManager instance associated with this plugin.
+            logger: The logger for errors and output.
+            name: The name of the plugin.
+            server_port: The port on which the server listens for incoming connections.
+            max_frequency: The maximum message frequency which clients can request.
+            min_frequency: The minimum message frequency which clients can request.
+            max_duration: The maximum duration which clients can request.
+        """
         super().__init__(dm, logger, name)
         self.inport = server_port
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -51,7 +121,7 @@ class UDPPlugin(Plugin):
 
         outsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.outsocket = outsock
-        self.clients: dict[tuple[str, int], UDPClient] = {}
+        self.clients: dict[tuple[str, int], _UDPClient] = {}
         self.background_functions = [
         ]
 
@@ -98,7 +168,7 @@ class UDPPlugin(Plugin):
                 if duration <= 0:
                     duration = self.max_duration
                 if (ip, port) not in self.clients:
-                    client = UDPClient(ip, port, frequency, duration)
+                    client = _UDPClient(ip, port, frequency, duration)
                     self.clients[(ip, port)] = client
                     send_task = asyncio.run_coroutine_threadsafe(self._client_sender(client), self._event_loop)
                     awaiter_task = asyncio.run_coroutine_threadsafe(coroutine_awaiter(send_task, self.logger),
@@ -119,13 +189,14 @@ class UDPPlugin(Plugin):
                 self.logger.debug(repr(e), exc_info=True)
                 self.logger.debug("Dummy")
 
-    async def _client_sender(self, client: "UDPClient"):
+    async def _client_sender(self, client: _UDPClient):
         """Send data to the client.
         """
-        # TODO: If we ever have a larger number of clients we should cache the jsons somehow
-        # TODO: The OSError for the send command is raised at the recvfrom for some reason, which breaks this client
-        #  closing. Not critical while we have a limited max duration.
+        next_msg_time = time.time()
         while client.duration == 0 or time.time() < (client.start_time + client.duration):
+            prev_msg_time = next_msg_time
+            msg_interval = 1 / client.frequency
+            next_msg_time = prev_msg_time + msg_interval
             try:
                 data = self._make_json()
                 self._send_msg(data, client.ip, client.port)
@@ -136,7 +207,7 @@ class UDPPlugin(Plugin):
             except Exception as e:
                 self.logger.warning("Exception sending data out over UDP! Check the log for details.")
                 self.logger.debug(repr(e), exc_info=True)
-            await asyncio.sleep(1 / client.frequency)
+            await asyncio.sleep(next_msg_time - time.time())
         if (client.ip, client.port) in self.clients:
             self.clients.pop((client.ip, client.port))
         self.logger.info(f"Finished sending data to {client.ip, client.port}")
@@ -153,17 +224,11 @@ class UDPPlugin(Plugin):
             target_list.append(current_target)
 
             # fence logic
-            fence_list = []
+            fence_box: list[float] = []
+            fence_type = None
             if getattr(drone, 'fence', None):  # Check if fence exists and is not None
-                fence_list = [
-                    drone.fence.north_lower,
-                    drone.fence.north_upper,
-                    drone.fence.east_lower,
-                    drone.fence.east_upper,
-                    drone.fence.down_lower,
-                    drone.fence.down_upper,
-                    drone.fence.safety_level
-                ]
+                fence_type = drone.fence.__class__.__name__
+                fence_box = drone.fence.bounding_box.tolist()
             drone_data[drone_name] = {
                 "position": drone.position_ned.tolist(),
                 "gps": drone.position_global.tolist(),
@@ -174,7 +239,8 @@ class UDPPlugin(Plugin):
                 "armed": drone.is_armed,
                 "in_air": drone.in_air,
                 "rtsp": drone.config.rtsp,
-                "fence": fence_list,
+                "fence-type": fence_type,
+                "fence-box": fence_box,
                 "target": target_list,
             }
         data = {"drones": drone_data}
@@ -206,15 +272,131 @@ class UDPPlugin(Plugin):
             self.logger.debug(repr(e), exc_info=True)
 
 
-class UDPClient:
+class DummyUDPClient:
+    """A dummy UDP client that starts a connection and then keeps it alive until shut down.
 
-    def __init__(self, ip, port, frequency, duration):
-        self.start_time = time.time()
-        self.ip = ip
-        self.port = port
+    You can update the frequency of the messages by changing :py:attr:`frequency`, or the outgoing frequency by
+    changing self.duration. It will be updated with the next hello message. You can also send one manually with send_update_message()
+    """
+
+    def __init__(self, server_ip: str, server_port: int, frequency = 2, duration = 30):
         self.frequency = frequency
-        self.duration = duration
+        # How often should the server send messages.
 
-    def __str__(self):
-        return (f"Client: {self.ip}:{self.port}, {self.frequency} Hz, "
-                f"{self.start_time + self.duration - time.time()}s remaining.")
+        self.duration = duration  # How long the server should send us info without a message from us. Making this very long is rude.
+        self.max_listen_time = 3
+
+        self.json_output = None
+        # The latest message from the server is stored here.
+
+        self.time_since_last = -1
+        # Time (in time.time() format) of the last message from the server. You can use this
+        # to check for connection loss.
+
+        # Socket stuff
+        self.socket = None
+        self.target = (server_ip, server_port)
+
+        self._running_tasks = set()
+        self._receiving_messages = False
+
+    def start(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setblocking(False)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", 0))
+        self.socket = sock
+        hello_task = asyncio.create_task(self._send_hello_messages())
+        self._running_tasks.add(hello_task)
+        listen_task = asyncio.create_task(self._receive())
+        self._running_tasks.add(listen_task)
+
+    def __enter__(self):
+        return self
+
+    def close(self):
+        for task in self._running_tasks:
+            if task is not None:
+                task.cancel()
+        self.socket.close()
+
+    def __exit__(self, exit_type, value, traceback):
+        self.close()
+
+    def send_update_message(self):
+        print(f"Sending update message. New frequency: {self.frequency} New keep-alive duration: {self.duration}")
+        msg = json.dumps({"duration": self.duration, "frequency": self.frequency})
+        self.socket.sendto(msg.encode("utf-8"), self.target)
+
+    async def _send_hello_messages(self):
+        while True:
+            try:
+                print(f"Sending {'initial' if not self._receiving_messages else 'recurring'} hello message...")
+                msg = json.dumps({"duration": self.duration, "frequency": self.frequency})
+                self.socket.sendto(msg.encode("utf-8"), self.target)
+            except Exception as e:
+                print("Exception sending initial hello packet! ", repr(e))
+            # Send every 1 second if we're not getting information yet, otherwise more rarely
+            if not self._receiving_messages:
+                await asyncio.sleep(1)
+            else:
+                await asyncio.sleep(self.duration - self.duration / 5)
+
+    async def _receive(self):
+        while True:
+            try:
+                msg = await asyncio.wait_for(asyncio.get_running_loop().sock_recv(self.socket, 1024), self.max_listen_time)
+                json_str = json.loads(msg)
+                self.json_output = json_str
+                self._receiving_messages = True
+                self.time_since_last = time.time()
+                print(time.time(), json_str)
+            except (TimeoutError, asyncio.TimeoutError):
+                self._receiving_messages = False
+                print("No messages from DroneManager...")
+                await asyncio.sleep(0)
+            except Exception as e:
+                print("Exception receiving data over UDP! ", repr(e))
+                await asyncio.sleep(0)  # Prevent getting stuck in the loop when we get this exception
+
+
+async def main_example(ip: str, port: int):
+    receiver = DummyUDPClient(ip, port)
+    receiver.start()
+    await asyncio.sleep(10)
+    print("Requesting updates with 2 Hz instead, waiting for natural update message.")
+    receiver.frequency = 2
+    await asyncio.sleep(42)
+    print("Requesting updates with 5 Hz, sending update message immediately.")
+    receiver.frequency = 5
+    receiver.send_update_message()
+    await asyncio.sleep(10)
+    receiver.close()
+    print("Done")
+
+
+async def main(ip: str, port: int):
+    with DummyUDPClient(ip, port) as receiver:
+        receiver.frequency = 2
+        receiver.duration = 60
+        receiver.start()
+        while True:
+            await asyncio.sleep(60)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Dummy UDP client to show functioning of 'External' plugin of DM")
+    parser.add_argument("address", type=str, default="127.0.0.1", nargs="?",
+                        help="IP address running DM. Default localhost.")
+    parser.add_argument("--port", type=int, default=DEFAULT_SERVER_PORT, required=False,
+                        help=f"Port on which the server is listening. Default {DEFAULT_SERVER_PORT}. The server port is"
+                             f"fixed in DM, so this argument is only necessary if you changed the configuration.")
+    parser.add_argument("-e", "--example", action="store_true",
+                        help="If this flag is set, instead of trying to connect and request indefinitely, we run "
+                             "through an example on the message frequencies and update messages.")
+    args = parser.parse_args()
+
+    if args.example:
+        asyncio.run(main_example(args.address, args.port))
+    else:
+        asyncio.run(main(args.address, args.port))

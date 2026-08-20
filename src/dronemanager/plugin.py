@@ -96,8 +96,7 @@ class Plugin(abc.ABC):
 
     @abc.abstractmethod
     async def status(self):
-        """Log status information about the plugin and its attribues.
-        """
+        """Log status information about the plugin and its attributes."""
         raise NotImplementedError
 
 
