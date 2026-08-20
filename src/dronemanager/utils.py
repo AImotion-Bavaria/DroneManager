@@ -287,7 +287,7 @@ def parse_address(string: str) -> tuple[str, str, int]:
     return scheme, loc, append
 
 
-async def coroutine_awaiter(task: asyncio.Future, logger: logging.Logger):
+async def coroutine_awaiter(task: asyncio.Future | Future, logger: logging.Logger):
     """Awaits the provided coroutine, logging any exceptions.
 
     In DroneManager, there are many functions that run indefinitely without a concrete return value. These functions
@@ -321,6 +321,7 @@ def cancel_running_tasks(running_tasks: MutableSet[asyncio.Future | Future]):
         task = running_tasks.pop()
         if isinstance(task, asyncio.Future) or isinstance(task, Future):
             task.cancel()
+
 
 # The first haversine/ inverse_haversine calls are slow, because of numba stuff, so do it here
 dist_gps([10, 20, 300], [20, 10, 400])
