@@ -5,9 +5,20 @@ The server listens on a fixed port for incoming requests from clients. Clients c
 duration and at a certain frequency. If clients want to extend the duration, they can send another request before the
 duration expires and the duration will be extended. Clients can change their message frequency using the same method.
 
-Also contains a minimal example client :py:class:`DummyUDPClient`.
+Messages contain core information, such as the position, velocity, whether the drone is armed or in the air,
+battery status and more. They also carry information about loaded missions, such as flight area, participating drones
+and custom information the missions define themselves with their
+:py:attr:`~dronemanager.plugins.mission.Mission.additional_info` attribute.
 
-TODO: Example client documentation with usage with DummyUDPClient
+
+This module also contains a minimal example client :py:class:`DummyUDPClient` and a simple script demonstrating the
+behaviour of the server. Running this module as a script without commands launches an echo client that requests
+messages from the server and prints them to console.
+
+The full command line options are `python external.py <server_address?> --port <server_port> -e`:
+* server_address: The IP address of the server.
+* --port server_port: The port of the server.
+* -e: A flag which changes the behaviour of the example script. Instead of indefinitely requesting messages
 """
 import argparse
 import asyncio
@@ -20,6 +31,7 @@ import select
 import socket
 import threading
 import time
+from types import TracebackType
 from typing import Any, Callable, Coroutine
 
 import dronemanager.core
@@ -357,7 +369,7 @@ class DummyUDPClient:
         self.socket = sock
         hello_task = asyncio.create_task(self._send_hello_messages())
         self.running_tasks.add(hello_task)
-        listen_task = asyncio.create_task(self._receive())
+        listen_task = asyncio.create_task(self.receive())
         self.running_tasks.add(listen_task)
 
     def __enter__(self) -> "DummyUDPClient":
@@ -373,16 +385,33 @@ class DummyUDPClient:
         cancel_running_tasks(self.running_tasks)
         self.socket.close()
 
-    def __exit__(self, exit_type, value, traceback):
+    def __exit__(self, exc_type: type[BaseException] | None,
+                 exc_value: BaseException | None,
+                 exc_tb: TracebackType | None):
+        """Magic method for exiting the context manager.
+
+        Calls :py:meth:`close`.
+
+        Args:
+            exc_type: ``None`` if we exited normally or the type of the exception if we exited due to an exception.
+            exc_value: ``None`` if we exited normally or the exception instance if we exited due to an exception.
+            exc_tb: ``None`` if we exited normally or the traceback for the exception.
+        """
         self.close()
 
     def send_update_message(self):
+        """Send a request to the server."""
         print(f"Sending update message. New frequency: {self.frequency} New keep-alive duration: {self.duration}")
         msg = json.dumps({"duration": self.duration, "frequency": self.frequency})
         self.socket.sendto(msg.encode("utf-8"), self.target)
 
     async def _send_hello_messages(self):
+        """Automatically sends a new request if the previous one is about to expire."""
+        next_msg_time = time.time()
         while True:
+            prev_msg_time = next_msg_time
+            msg_interval = self.duration * 0.8
+            next_msg_time = prev_msg_time + msg_interval
             try:
                 print(f"Sending {'initial' if not self.receiving_messages else 'recurring'} hello message...")
                 msg = json.dumps({"duration": self.duration, "frequency": self.frequency})
@@ -393,12 +422,18 @@ class DummyUDPClient:
             if not self.receiving_messages:
                 await asyncio.sleep(1)
             else:
-                await asyncio.sleep(self.duration - self.duration / 5)
+                await asyncio.sleep(next_msg_time - time.time())
 
-    async def _receive(self):
+    async def receive(self):
+        """Listens for messages from DroneManager.
+
+        Receives messages from DroneManager, prints them to console and stores the content and updates
+        :py:attr:`receiving_messages` and :py:attr:`time_of_last`.
+        """
         while True:
             try:
-                msg = await asyncio.wait_for(asyncio.get_running_loop().sock_recv(self.socket, 1024), self.max_listen_time)
+                msg = await asyncio.wait_for(asyncio.get_running_loop().sock_recv(self.socket, 1024),
+                                             self.max_listen_time)
                 json_str = json.loads(msg)
                 self.json_output = json_str
                 self.receiving_messages = True
@@ -414,13 +449,21 @@ class DummyUDPClient:
 
 
 async def frequency_example(ip: str, port: int):
+    """Example script showing the frequency of sent messages being updated.
+
+    Args:
+        ip: The IP of the server.
+        port: The port of the server.
+    """
     with DummyUDPClient(ip, port, frequency=1, duration=30) as receiver:
         receiver.start()
         await asyncio.sleep(10)
         print("Requesting updates with 2 Hz instead, waiting for natural update message.")
+        print("Frequency will not update until the natural refresh in a few seconds.")
         receiver.frequency = 2
         await asyncio.sleep(42)
         print("Requesting updates with 5 Hz, sending update message immediately.")
+        print("Messages are sent with new frequency immediately.")
         receiver.frequency = 5
         receiver.send_update_message()
         await asyncio.sleep(10)
@@ -428,8 +471,14 @@ async def frequency_example(ip: str, port: int):
 
 
 async def passive_listener(ip: str, port: int):
+    """Example script just echoing the messages from DroneManager until shutdown.
+
+    Args:
+        ip: The IP of the server.
+        port: The port of the server.
+    """
     with DummyUDPClient(ip, port) as receiver:
-        receiver.frequency = 2
+        receiver.frequency = 5
         receiver.duration = 60
         receiver.start()
         while True:
