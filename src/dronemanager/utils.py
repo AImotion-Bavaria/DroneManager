@@ -44,14 +44,14 @@ SRC_DIR = pathlib.Path(__file__).parent
 :meta hide-value:
 """
 
-LOG_DIR = DM_INSTALL_DIR.joinpath("Logs")  #Path(__file__).parent.parent.parent.joinpath("logs")
+LOG_DIR = DM_INSTALL_DIR.joinpath("Logs")
 """ The directory where all the log files are saved.
 
 :meta hide-value:
 """
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-CACHE_DIR = DM_INSTALL_DIR.joinpath(".cache")   #Path(__file__).parent.parent.parent.joinpath(".cache")
+CACHE_DIR = DM_INSTALL_DIR.joinpath(".cache")
 """ The directory for any information that might be worth caching.
 
 Currently only used for camera definition information.

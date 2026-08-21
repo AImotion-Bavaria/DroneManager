@@ -188,7 +188,7 @@ class SensorPlugin(MetaPlugin):
     PREFIX: str = "sensor"
     """The prefix for the CLI commands, "sensor" by default."""
 
-    def __init__(self, dm, logger, name):
+    def __init__(self, dm: dronemanager.core.DroneManager, logger: logging.Logger, name: str):
         """Create the SensorPlugin.
 
         Args:
@@ -205,7 +205,7 @@ class SensorPlugin(MetaPlugin):
         }
 
     async def status(self):
-        """ Status of loaded sensors and sensors that could be loaded."""
+        """Status of loaded sensors and sensors that could be loaded."""
         self.logger.info("Status of loaded sensors:")
         for sensor in self._loaded:
             await getattr(self, sensor).status()
