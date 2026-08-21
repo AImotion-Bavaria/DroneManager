@@ -48,10 +48,10 @@ async def test_plugin_dummy(dm: DroneManager):
         json=EXAMPLE_JSON,
         status=200,
     )
-    await dm.load_plugin("sensor")
-    sensor = await dm.sensor.load("ecowitt")
-    sensor.ip = ip
-    res = await dm.ecowitt.connect(ip)
+    sensor = await dm.load("sensor")
+    ecowitt = await sensor.load("ecowitt")
+    ecowitt.ip = ip
+    res = await ecowitt.connect(ip)
 
     assert res
 
@@ -61,14 +61,14 @@ async def test_plugin_dummy(dm: DroneManager):
         json=EXAMPLE_JSON,
         status=200,
     )
-    weather_data = await dm.ecowitt.get_data()
+    weather_data = await ecowitt.get_data()
     logging.error(weather_data)
     json_dict = weather_data.to_json_dict()
     wd = WeatherData.from_json_dict(json_dict)
 
     assert wd.temperature.value == 22.9, "Failed to parse, save and reload weather data"
 
-    await dm.ecowitt.status()
+    await ecowitt.status()
 
     responses.add(
         responses.GET,
@@ -76,7 +76,7 @@ async def test_plugin_dummy(dm: DroneManager):
         json=EXAMPLE_JSON,
         status=404,
     )
-    weather_data = await dm.ecowitt.get_data()
+    weather_data = await ecowitt.get_data()
     assert weather_data is None
 
     responses.add(
@@ -86,6 +86,6 @@ async def test_plugin_dummy(dm: DroneManager):
         status=200,
     )
 
-    await dm.ecowitt.reconnect()
-    await dm.ecowitt.disconnect()
-    await dm.sensor.unload("ecowitt")
+    await ecowitt.reconnect()
+    await ecowitt.disconnect()
+    await sensor.unload("ecowitt")

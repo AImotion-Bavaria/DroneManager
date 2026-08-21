@@ -20,7 +20,7 @@ async def dm_for_external(dm: DroneManager) -> AsyncGenerator[DroneManager, Any]
     Yields:
         A DroneManager instance with the external plugin already loaded.
     """
-    await dm.load_plugin("external")
+    await dm.load("external")
     yield dm
 
 
@@ -59,7 +59,7 @@ async def test_dummy_client(dm_for_external: DroneManager, mock_drone: Mock):
         mock_drone: A mock drone object for the test
     """
     # Load a mission and add a drone.
-    await dm_for_external.load_plugin("mission")
+    await dm_for_external.load("mission")
     assert hasattr(dm_for_external, "mission")
     mission_plugin = getattr(dm_for_external, "mission")
     external_plugin = getattr(dm_for_external, "external")

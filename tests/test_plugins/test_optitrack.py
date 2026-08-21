@@ -101,7 +101,7 @@ async def dm_with_optitrack_mock(dm: DroneManager) -> AsyncGenerator[tuple[Drone
         A DroneManager instance with loaded optitrack plugin and the mocked NatNetClient object.
     """
     with patch("dronemanager.plugins.optitrack.NatNetClient") as NatNetMock:
-        await dm.load_plugin("optitrack")
+        await dm.load("optitrack")
         client = NatNetMock.return_value
         out = dm, client
         yield out
@@ -238,7 +238,7 @@ async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager,
     # Remove drone and check callback
     await optitrack.remove_drone("mock")
     assert len(optitrack._drone_id_mapping) == 0
-    frame_counter = do_callback(frame_counter)
+    do_callback(frame_counter)
     await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
     mock_drone.send_external_tracking_data.assert_called_once()
 
@@ -284,6 +284,6 @@ async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock
     # Remove the drone and test that callback removes it properly.
     await dm.disconnect("mock")
     assert len(optitrack._drone_id_mapping) == 1
-    frame_counter = do_callback(frame_counter)
+    do_callback(frame_counter)
     await asyncio.sleep(0.1)
     assert len(optitrack._drone_id_mapping) == 0

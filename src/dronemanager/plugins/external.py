@@ -292,7 +292,7 @@ class UDPPlugin(Plugin):
             mission_data = {}
             data["missions"] = mission_data
             for mission_name in self.dm.mission.loaded:
-                mission = getattr(self.dm, mission_name)
+                mission = self.dm.mission.loaded[mission_name]
                 mission_data[mission.PREFIX] = {
                     "flight-area": mission.flight_area.bounding_box if mission.flight_area is not None else None,
                     "stage": mission.current_stage.name if mission.current_stage is not None else None,

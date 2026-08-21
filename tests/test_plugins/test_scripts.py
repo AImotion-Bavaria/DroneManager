@@ -22,13 +22,14 @@ async def test_script(dm: DroneManager):
     Args:
         dm: DroneManager instance.
     """
-    await dm.load_plugin("scripts")
+    await dm.load("scripts")
     arg_success = "--success"
     arg_fail = "--fail"
-    res = await dm.scripts.execute_script("dummy_script.py", [arg_success])
+    scripts = getattr(dm, "scripts")
+    res = await scripts.execute_script("dummy_script.py", [arg_success])
     assert res.returncode == 0
     assert res.stdout == "Success!\n"
 
-    res = await dm.scripts.execute_script("dummy_script.py", [arg_fail])
+    res = await scripts.execute_script("dummy_script.py", [arg_fail])
     assert res.returncode == 1
     assert res.stderr == "Failure!"

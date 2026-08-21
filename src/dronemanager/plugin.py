@@ -126,7 +126,7 @@ class MetaPlugin(Plugin, abc.ABC):
 
     def __init__(self, dm: "dronemanager.core.DroneManager", logger, name, *args, **kwargs):
         super().__init__(dm, logger, name, *args, **kwargs)
-        self._loaded = set()
+        self._loaded: dict[str, Plugin] = {}
         self._first_time_setup()
 
     @property
@@ -233,7 +233,7 @@ class MetaPlugin(Plugin, abc.ABC):
                     kwargs = {}
                 plugin = plugin_class(self.dm, self.logger, name, **kwargs)
                 setattr(self.dm, name, plugin)
-                self._loaded.add(name)
+                self._loaded[name] = plugin
                 await plugin.start()
             except Exception as e:
                 self.logger.error(f"Couldn't load plugin {name} due to an exception: {repr(e)}!")
@@ -243,7 +243,7 @@ class MetaPlugin(Plugin, abc.ABC):
                 if hasattr(self.dm, name):
                     delattr(self.dm, name)
                 if name in self._loaded:
-                    self._loaded.remove(name)
+                    self._loaded.pop(name)
                 return False
             self.logger.debug(f"Performing callbacks for plugin loading...")
             for func in self.ON_LOAD_COROS:
@@ -260,8 +260,7 @@ class MetaPlugin(Plugin, abc.ABC):
             self.logger.warning(f"No loaded plugin named {name}!")
             return False
         self.logger.info(f"Unloading plugin {name}")
-        self._loaded.remove(name)
-        plugin = getattr(self.dm, name)
+        plugin = self._loaded.pop(name)
         self.logger.debug(f"Attr object{plugin}")
         unload_tasks = set()
         for func in self.ON_UNLOAD_COROS:
@@ -277,9 +276,8 @@ class MetaPlugin(Plugin, abc.ABC):
 
     async def close(self):
         while len(self._loaded) > 0:
-            plugin = self._loaded.pop()
-            self._loaded.add(plugin)
-            await self.unload(plugin)
+            for name in list(self._loaded.keys()):
+                await self.unload(name)
         await super().close()
 
 

@@ -32,7 +32,7 @@ async def test_stream(dm: dronemanager.core.DroneManager, video_stream_source: T
     checker = ImageChecker()
 
     # Load the plugin and start the stream for the test duration
-    await dm.load_plugin("stream")
+    await dm.load("stream")
     stream = getattr(dm, "stream", None)
     assert stream is not None
     stream.add_callback(checker._img_callback)

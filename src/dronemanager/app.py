@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import asyncio
 from collections.abc import Callable
@@ -41,6 +43,84 @@ pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name_last)s - %(
 
 UPDATE_RATE = 20  # How often the various screens update in Hz.
 BENCHMARKING = False
+
+
+class DroneApp(App):
+    BINDINGS = {
+        Binding("s", "cycle_control", "Swap Status/Control"),
+    }
+    """ Key Bindings """
+
+    TITLE = f"DroneManager v{dronemanager.__version__}"
+    """ Window Title """
+
+    MODES = {}
+    """ A dictionary of the available app "modes". Actual modes are added toward the bottom of the module.
+
+    An app mode is essentially a different view, we can cycle between them. See the textual documentation for more 
+    information."""
+
+    def __init__(self, dm: DroneManager, logger=None, smoke_test=False):
+        self.dm = dm
+        self.smoke_test = smoke_test
+        self.logging_handlers = []
+        if logger is None:
+            self.logger = logging.getLogger("App")
+            self.logger.setLevel(logging.DEBUG)
+            filename = f"app_{datetime.datetime.now()}"
+            filename = filename.replace(":", "_").replace(".", "_") + ".log"
+            logdir = os.path.abspath("./logs")
+            os.makedirs(logdir, exist_ok=True)
+            file_handler = logging.FileHandler(os.path.join(logdir, filename))
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.append(file_handler)
+            self.logger.addHandler(file_handler)
+        else:
+            self.logger = logger
+
+        self.running_tasks: set[asyncio.Task] = set()
+        self._awaiter_tasks = set()
+
+        super().__init__()
+
+    def on_mount(self):
+        self.switch_mode("control")
+        if self.smoke_test:
+            self.set_timer(10, self._smoke_test_end)
+
+    def _smoke_test_end(self):
+        self.exit()
+
+    async def on_unmount(self):
+        self._remove_handlers()
+        await self._close()
+
+    def _remove_handlers(self):
+        for handler in self.logging_handlers:
+            self.logger.removeHandler(handler)
+            handler.close()
+
+    async def _close(self):
+        cancel_running_tasks(self.running_tasks)
+        cancel_running_tasks(self._awaiter_tasks)
+        await asyncio.sleep(0.2)  # Beauty pause
+        self.logger.info("Exiting...")
+        await self.dm.close()
+        await asyncio.sleep(1)  # Beauty pause
+        for handler in self.logger.handlers:
+            self.logger.removeHandler(handler)
+
+    def action_cycle_control(self):
+        self.logger.debug("Switching between control and status screens")
+        if self.current_mode == "control":
+            self.logger.debug(f"Switching from control to status.")
+            self.switch_mode("status")
+        elif self.current_mode != "control":
+            self.logger.debug("Switching to control")
+            self.switch_mode("control")
+        else:
+            self.logger.debug("No valid target for switching")
 
 
 class StatusScreen(Screen):
@@ -466,7 +546,7 @@ class CommandScreen(Screen):
                 elif command == "unload":
                     tmp = asyncio.create_task(self.dm.unload_plugin(args.plugin))
                 elif command == "loaded":
-                    self.logger.info(f"Currently loaded plugins: {self.dm.plugins}")
+                    self.logger.info(f"Currently loaded plugins: {self.dm.plugins.keys()}")
                 elif command == "plugins":
                     available_but_not_loaded = [item for item in self.dm.plugin_options
                                                 if item not in self.dm.plugins]
@@ -633,88 +713,6 @@ class CommandScreen(Screen):
         self._schedule_initialization_tasks()
 
 
-class DroneApp(App):
-
-    BINDINGS = {
-        Binding("s", "cycle_control", "Swap Status/Control"),
-    }
-    """ Key Bindings """
-
-    TITLE = f"DroneManager v{dronemanager.__version__}"
-    """ Window Title """
-
-    MODES = {
-        "control": CommandScreen,
-        "status": StatusScreen,
-    }
-    """ A dictionary of the available app "modes".
-    
-    An app mode is essentially a different view, we can cycle between them. See the textual documentation for more 
-    information."""
-
-    def __init__(self, dm: DroneManager, logger=None, smoke_test=False):
-        self.dm = dm
-        self.smoke_test = smoke_test
-        self.logging_handlers = []
-        if logger is None:
-            self.logger = logging.getLogger("App")
-            self.logger.setLevel(logging.DEBUG)
-            filename = f"app_{datetime.datetime.now()}"
-            filename = filename.replace(":", "_").replace(".", "_") + ".log"
-            logdir = os.path.abspath("./logs")
-            os.makedirs(logdir, exist_ok=True)
-            file_handler = logging.FileHandler(os.path.join(logdir, filename))
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(COMMON_FORMATTER)
-            self.logging_handlers.append(file_handler)
-            self.logger.addHandler(file_handler)
-        else:
-            self.logger = logger
-
-        self.running_tasks: set[asyncio.Task] = set()
-        self._awaiter_tasks = set()
-
-        super().__init__()
-
-    def on_mount(self):
-        self.switch_mode("control")
-        if self.smoke_test:
-            self.set_timer(10, self._smoke_test_end)
-
-    def _smoke_test_end(self):
-        self.exit()
-
-    async def on_unmount(self):
-        self._remove_handlers()
-        await self._close()
-
-    def _remove_handlers(self):
-        for handler in self.logging_handlers:
-            self.logger.removeHandler(handler)
-            handler.close()
-
-    async def _close(self):
-        cancel_running_tasks(self.running_tasks)
-        cancel_running_tasks(self._awaiter_tasks)
-        await asyncio.sleep(0.2)  # Beauty pause
-        self.logger.info("Exiting...")
-        await self.dm.close()
-        await asyncio.sleep(1)  # Beauty pause
-        for handler in self.logger.handlers:
-            self.logger.removeHandler(handler)
-
-    def action_cycle_control(self):
-        self.logger.debug("Switching between control and status screens")
-        if self.current_mode == "control":
-            self.logger.debug(f"Switching from control to status.")
-            self.switch_mode("status")
-        elif self.current_mode != "control":
-            self.logger.debug("Switching to control")
-            self.switch_mode("control")
-        else:
-            self.logger.debug("No valid target for switching")
-
-
 def check_cli_command_signatures(command: Callable) -> list[tuple]:
     """Inspects a function signature to determine the type of the arguments, if they are optional, etc.
 
@@ -814,6 +812,12 @@ def check_cli_command_signatures(command: Callable) -> list[tuple]:
         args_defaults.append(default)
 
     return list(zip(args_invalid, args_name, args_list, args_required, args_accepts_none, args_types, args_kwonly, args_has_defaults, args_defaults))
+
+
+DroneApp.MODES = {
+        "control": CommandScreen,
+        "status": StatusScreen,
+    }
 
 
 def main():
