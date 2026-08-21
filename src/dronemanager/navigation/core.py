@@ -5,8 +5,9 @@ import numpy as np
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 
+import dronemanager.drone
 from dronemanager.utils import dist_ned, relative_gps, heading_ned, heading_gps, offset_from_gps
-import dronemanager
+
 
 
 class WayPointType(Enum):

@@ -12,7 +12,9 @@ import cv2
 from mavsdk import System
 
 from dronemanager.core import DroneManager
-from dronemanager.drone import DroneMAVSDK
+from dronemanager.drone import DroneMAVSDK, DroneConfig, FlightMode
+from dronemanager.navigation.core import PathGenerator, PathFollower, Waypoint, WayPointType
+from dronemanager.navigation.rectlocalfence import RectLocalFence
 
 
 pygame.init()
@@ -97,7 +99,7 @@ async def video_stream_source() -> AsyncGenerator[TCPStreamer, Any]:
 
 
 @pytest.fixture
-def mock_drone_object() -> Mock:
+def mock_drone() -> Mock:
     """Fixture for a mock drone object.
 
     Mocks a bunch of the individual components
@@ -115,19 +117,19 @@ def mock_drone_object() -> Mock:
     mockdrone.send_external_tracking_data = AsyncMock()
     mockdrone.system.mocap.set_vision_position_estimate = AsyncMock()
 
+    # Drone property mocks
+    mockdrone.path_generator = Mock(spec=PathGenerator)
+    mockdrone.path_generator.target_position = Waypoint(WayPointType.POS_NED, pos=[2, 3, -6], yaw=90)
+    mockdrone.path_follower = Mock(spec=PathFollower)
+    mockdrone.config = DroneConfig("mock", address="dummy_address")
+    mockdrone.position_ned = np.asarray([1, 1, -2], dtype=np.float64)
+    mockdrone.position_global = np.asarray([-1, -1, 300], dtype=np.float64)
+    mockdrone.velocity = np.asarray([0.1, 0.2, 0.3], dtype=np.float64)
+    mockdrone.attitude = np.asarray([5.0, 10.0, 20.0], dtype=np.float64)
+    mockdrone.flightmode = FlightMode.POSCTL
+    mockdrone.is_connected = True
+    mockdrone.is_armed = True
+    mockdrone.in_air = True
+    mockdrone.fence = RectLocalFence(0, 3, -1, 4, -10, -1)
+
     return mockdrone
-
-
-@pytest.fixture
-def mock_drone_connected(mock_drone_object: Mock) -> Mock:
-    """Fixture for a connected mock drone object.
-
-    Args:
-        mock_drone_object: A mock object that has not been "instantiated".
-
-    Returns:
-        A Mock object specced to and wrapping DroneMAVSDK
-    """
-    # Core mocks
-    mock_drone_object.is_connected = True
-    return mock_drone_object

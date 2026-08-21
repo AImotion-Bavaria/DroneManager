@@ -183,12 +183,12 @@ async def test_optitrack_connect(dm_with_optitrack_mock: tuple[DroneManager, Moc
     assert optitrack.client is client
 
 
-async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone_connected: Mock):
+async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone: Mock):
     """Tests core functionality around processing Motive data.
 
     Args:
         dm_with_optitrack_mock: The DroneManager instance with loaded optitrack plugin.
-        mock_drone_connected: The mocked drone object to be used during the tests.
+        mock_drone: The mocked drone object to be used during the tests.
     """
     dm, client = dm_with_optitrack_mock
     optitrack = getattr(dm, "optitrack")
@@ -197,7 +197,7 @@ async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager,
     await optitrack.set_coordinates_body("x", "z", "-y")
     await optitrack.set_coordinates_world("z", "-x", "-y")
 
-    dm.drones["mock"] = mock_drone_connected
+    dm.drones["mock"] = mock_drone
 
     assert len(optitrack.available_bodies) == 0
     frame_counter = 0
@@ -233,27 +233,27 @@ async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager,
     assert len(optitrack._drone_id_mapping) == 1
     frame_counter = do_callback(frame_counter)
     await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
-    mock_drone_connected.send_external_tracking_data.assert_called_once()
+    mock_drone.send_external_tracking_data.assert_called_once()
 
     # Remove drone and check callback
     await optitrack.remove_drone("mock")
     assert len(optitrack._drone_id_mapping) == 0
     frame_counter = do_callback(frame_counter)
     await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
-    mock_drone_connected.send_external_tracking_data.assert_called_once()
+    mock_drone.send_external_tracking_data.assert_called_once()
 
 
-async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone_connected: Mock):
+async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone: Mock):
     """Tests assorted error handling components of the plugin.
 
     Args:
         dm_with_optitrack_mock: The DroneManager instance with loaded optitrack plugin.
-        mock_drone_connected: The mocked drone object to be used during the tests.
+        mock_drone: The mocked drone object to be used during the tests.
     """
     dm, client = dm_with_optitrack_mock
     optitrack = getattr(dm, "optitrack")
 
-    dm.drones["mock"] = mock_drone_connected
+    dm.drones["mock"] = mock_drone
     frame_counter = 0
 
     def do_callback(frame_count: int) -> int:
@@ -275,7 +275,7 @@ async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock
     await optitrack.add_drone("mock", 0)
 
     # Test Mocap errors.
-    mock_drone_connected.system.mocap.set_vision_position_estimate.side_effect = \
+    mock_drone.system.mocap.set_vision_position_estimate.side_effect = \
         MocapError(2, "Test exception, please ignore")
     frame_counter = do_callback(frame_counter)
     await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.

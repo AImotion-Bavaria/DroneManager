@@ -150,8 +150,11 @@ class UDPPlugin(Plugin):
 
         Cancels running coroutines and stops the thread.
         """
-        await super().close()
         self._stop_threads = True
+        self.socket.close()
+        await asyncio.to_thread(self._listen_thread.join)
+        self.outsocket.close()
+        await super().close()
 
     async def status(self):
         """Log currently connected clients."""
@@ -180,7 +183,7 @@ class UDPPlugin(Plugin):
                     else:
                         continue
                 except socket.error as e:
-                    if e.errno in [errno.EAGAIN, errno.EWOULDBLOCK, errno.ECONNREFUSED]:
+                    if e.errno in [errno.EAGAIN, errno.EWOULDBLOCK, errno.ECONNREFUSED, errno.ENOTSOCK]:
                         continue
                     else:
                         raise
@@ -218,7 +221,6 @@ class UDPPlugin(Plugin):
             except Exception as e:
                 self.logger.warning("Exception listening for incoming UDP!")
                 self.logger.debug(repr(e), exc_info=True)
-                self.logger.debug("Dummy")
 
     async def _client_sender(self, client: UDPClient):
         """Message emitting coroutine.
@@ -228,8 +230,8 @@ class UDPPlugin(Plugin):
         Args:
             client: The client to which we send information.
         """
-        next_msg_time = time.time()
-        while client.duration == 0 or time.time() < (client.start_time + client.duration):
+        next_msg_time = time.monotonic()
+        while client.duration == 0 or time.monotonic() < (client.start_time + client.duration):
             prev_msg_time = next_msg_time
             msg_interval = 1 / client.frequency
             next_msg_time = prev_msg_time + msg_interval
@@ -237,13 +239,14 @@ class UDPPlugin(Plugin):
                 data = self._make_json()
                 self._send_msg(data, client.ip, client.port)
             except OSError as e:
+                # This doesn't seem to work, we just never get an exception if the client closes.
                 self.logger.info("Couldn't send information, closing connection...")
                 self.logger.info(f"{e.errno}: {e.strerror}")
                 break
             except Exception as e:
                 self.logger.warning("Exception sending data out over UDP! Check the log for details.")
                 self.logger.debug(repr(e), exc_info=True)
-            await asyncio.sleep(next_msg_time - time.time())
+            await asyncio.sleep(max(0, next_msg_time - time.monotonic()))
         if (client.ip, client.port) in self.clients:
             self.clients.pop((client.ip, client.port))
         self.logger.info(f"Finished sending data to {client.ip, client.port}")
@@ -410,8 +413,6 @@ class DummyUDPClient:
         next_msg_time = time.time()
         while True:
             prev_msg_time = next_msg_time
-            msg_interval = self.duration * 0.8
-            next_msg_time = prev_msg_time + msg_interval
             try:
                 print(f"Sending {'initial' if not self.receiving_messages else 'recurring'} hello message...")
                 msg = json.dumps({"duration": self.duration, "frequency": self.frequency})
@@ -422,7 +423,10 @@ class DummyUDPClient:
             if not self.receiving_messages:
                 await asyncio.sleep(1)
             else:
-                await asyncio.sleep(next_msg_time - time.time())
+                msg_interval = self.duration * 0.8
+                next_msg_time = prev_msg_time + msg_interval
+                wait_to_next_msg = max(0, next_msg_time - time.time())
+                await asyncio.sleep(wait_to_next_msg)
 
     async def receive(self):
         """Listens for messages from DroneManager.
@@ -455,18 +459,18 @@ async def frequency_example(ip: str, port: int):
         ip: The IP of the server.
         port: The port of the server.
     """
-    with DummyUDPClient(ip, port, frequency=1, duration=30) as receiver:
+    with DummyUDPClient(ip, port, frequency=1, duration=20) as receiver:
         receiver.start()
         await asyncio.sleep(10)
         print("Requesting updates with 2 Hz instead, waiting for natural update message.")
         print("Frequency will not update until the natural refresh in a few seconds.")
         receiver.frequency = 2
-        await asyncio.sleep(42)
+        await asyncio.sleep(15)
         print("Requesting updates with 5 Hz, sending update message immediately.")
         print("Messages are sent with new frequency immediately.")
         receiver.frequency = 5
         receiver.send_update_message()
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
     print("Done")
 
 
