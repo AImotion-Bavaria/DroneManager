@@ -33,45 +33,50 @@ class Mission(Plugin, abc.ABC):
         self.additional_info = {}
 
     async def start(self):
-        """ This function is called when the mission is loaded to start all the necessary processes asynchronously.
+        """This function is called when the mission is loaded to start all the necessary processes asynchronously.
 
         It is NOT a "start this mission" function. By default, launches any background processes, like starting a
-        plugin."""
+        plugin.
+        """
         await super().start()
 
     async def close(self):
-        """ Shutdown function for the script. It should end any running tasks and clear any resources.
+        """Shutdown function for the script. It should end any running tasks and clear any resources.
 
-        By default, it cancels any tasks tracked in self._running_tasks."""
+        By default, it cancels any tasks tracked in self._running_tasks.
+        """
         await super().close()
 
     @abc.abstractmethod
     async def reset(self):
-        """ Resets the mission back to the initial position.
+        """Resets the mission back to the initial position.
 
-        Keep safety in mind when this requires moving drones."""
+        Keep safety in mind when this requires moving drones.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     async def status(self):
-        """ Should write information about the current status of the mission to the logger under INFO."""
+        """Should write information about the current status of the mission to the logger under INFO."""
         raise NotImplementedError
 
     @abc.abstractmethod
     async def add_drones(self, names: list[str]):
-        """ Add drones to the mission. Implementations should check that the drones are capable and meet mission
-        requirements."""
+        """Add drones to the mission. Implementations should check that the drones are capable and meet mission
+        requirements.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     async def remove_drones(self, names: list[str]):
-        """ Remove drones from the mission. Implementations must take measures to prevent missions from running with
-        too few drones"""
+        """Remove drones from the mission. Implementations must take measures to prevent missions from running with
+        too few drones
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     async def mission_ready(self, drone: str):
-        """ Check whether any given drone is ready to keep going, i.e. is still connected etc. """
+        """Check whether any given drone is ready to keep going, i.e. is still connected etc."""
         raise NotImplementedError
 
 

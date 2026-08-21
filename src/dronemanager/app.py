@@ -4,7 +4,6 @@ import datetime
 import inspect
 import os
 import shlex
-import sys
 import types
 import typing
 
@@ -18,10 +17,12 @@ import textual.css.query
 from textual import on, events
 from textual.app import App, Screen, Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, Header, Log, Static, RadioSet, RadioButton, ProgressBar
 from textual.widget import Widget
+from textual.widgets import Footer, Header, Log, Static, RadioSet, \
+    RadioButton, ProgressBar
 
-from dronemanager.widgets import InputWithHistory, TextualLogHandler, DroneOverview, ArgParser, ArgumentParserError, \
+from dronemanager.widgets import InputWithHistory, TextualLogHandler, \
+    DroneOverview, ArgParser, ArgumentParserError, \
     PrintHelpInsteadOfParsingError
 
 import logging
@@ -41,11 +42,11 @@ BENCHMARKING = False
 
 
 class StatusScreen(Screen):
-    """ A screen showing detailed information for a single drone.
+    """A screen showing detailed information for a single drone.
 
     """
 
-    CSS = """ 
+    CSS = """
 ProgressBar {
     width: 25;
     height: 1;
@@ -85,12 +86,12 @@ Bar {
             except textual.app.NoMatches:
                 pass
             except Exception as e:
-                self.logger.error(f"Error updating values.")
+                self.logger.error("Error updating values.")
                 self.logger.debug({repr(e)}, exc_info=True)
             await asyncio.sleep(1/UPDATE_RATE)
 
     def compose(self):
-        """ Creates the screen object
+        """Creates the screen object
         """
         with Horizontal():
             with RadioSet(id="droneselector"):
@@ -560,7 +561,7 @@ class CommandScreen(Screen):
             await self.exit()
 
     async def exit(self):
-        """ Checks if any drones are armed and exits the app if not."""
+        """Checks if any drones are armed and exits the app if not."""
         stop_app = True
         try:
             for name in self.dm.drones:
@@ -577,6 +578,8 @@ class CommandScreen(Screen):
                 self.logger.info("Exiting...")
                 await self.dm.close()
                 await asyncio.sleep(1)  # Beauty pause
+                for handler in self.logger.handlers:
+                    self.logger.removeHandler(handler)
                 self.app.exit()
             else:
                 self.logger.warning("Can't exit the app with armed drones!")
@@ -613,7 +616,7 @@ class CommandScreen(Screen):
             self.textual_log_handler.drain(100)
 
     def compose(self):
-        """ Creates the screen object
+        """Creates the screen object
         """
         status_string = ""
         status_string += "Drone Status\n" + DroneOverview.header_string()
@@ -710,6 +713,14 @@ class DroneApp(App):
         for handler in self.logger.handlers:
             self.logger.removeHandler(handler)
 
+    def on_unmount(self):
+        self._remove_handlers()
+
+    def _remove_handlers(self):
+        for handler in self._logging_handlers:
+            self.logger.removeHandler(handler)
+            handler.close()
+
     def action_cycle_control(self):
         self.logger.debug("Switching between control and status screens")
         if self.current_mode == "control":
@@ -723,7 +734,7 @@ class DroneApp(App):
 
 
 def check_cli_command_signatures(command: Callable) -> list[tuple]:
-    """ Inspects a function signature to determine the type of the arguments, if they are optional, etc.
+    """Inspects a function signature to determine the type of the arguments, if they are optional, etc.
 
     Returns a tuple for each argument. Each tuple contains:
 
@@ -863,15 +874,12 @@ def main():
         drone_manager = DroneManager(log_to_console=False)
         app = DroneApp(drone_manager, logger=drone_manager.logger)
         app.run()
-        logging.shutdown()
         stop_cpu_checker.set()
         profile_process.join()
     else:
-        smoke_test = "--smoke-test" in sys.argv
         drone_manager = DroneManager(log_to_console=False)
-        app = DroneApp(drone_manager, logger=drone_manager.logger, smoke_test=smoke_test)
+        app = DroneApp(drone_manager, logger=drone_manager.logger)
         app.run()
-        logging.shutdown()
 
 
 if __name__ == "__main__":

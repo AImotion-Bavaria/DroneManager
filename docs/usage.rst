@@ -208,7 +208,8 @@ instance, connect to a drone and perform some basic maneuvers::
 
 
 All the CLI commands are also available as functions. Plugins can be loaded and are accessible as attributes of the DM
-instance under the name of the plugin.
+instance under the name of the plugin. Note that ``await dm.close()`` should be called for any dm instance, to ensure any
+threads or event loops are shut down.
 
 Example mission
 ---------------

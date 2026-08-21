@@ -6,17 +6,17 @@ import cv2
 import numpy as np
 from dronemanager.plugin import Plugin
 
+
 class StreamPlugin(Plugin):
-    """ Plugin to receive video stream from Unity via TCP. """
-    
+    """Plugin to receive video stream from Unity via TCP."""
+
     # This prefix is used for CLI commands (e.g., 'unity start')
     PREFIX = "stream"
 
     def __init__(self, dm, logger, name, ip="127.0.0.1", port=5000, **kwargs):
-        """
-        Args:
-            ip: Default IP, can be set via config.json 'plugin_settings'.
-            port: Default Port, can be set via config.json 'plugin_settings'.
+        """Args:
+        ip: Default IP, can be set via config.json 'plugin_settings'.
+        port: Default Port, can be set via config.json 'plugin_settings'.
         """
         super().__init__(dm, logger, name, **kwargs)
         self.default_ip = ip
@@ -25,7 +25,7 @@ class StreamPlugin(Plugin):
         self.stream_task = None
         self.display_stream = False
         self.callbacks: set[Callable] = set()
-        
+
         # Register CLI commands
         self.cli_commands = {
             "start": self.start_stream,
@@ -34,9 +34,8 @@ class StreamPlugin(Plugin):
         }
 
     async def start_stream(self, ip: str = None, port: int = None):
-        """ 
-        Starts the Video Stream. 
-        
+        """Starts the Video Stream.
+
         Args:
             ip: Override the default IP (optional).
             port: Override the default Port (optional).
@@ -51,14 +50,14 @@ class StreamPlugin(Plugin):
 
         self.running = True
         self.logger.info(f"Starting Stream Listener on {target_ip}:{target_port}...")
-        
+
         # Run the loop as a background task so we don't block the CLI or DroneManager
         self.stream_task = asyncio.create_task(self._stream_loop(target_ip, target_port))
         self.running_tasks.add(self.stream_task)
         return True
 
     async def stop_stream(self):
-        """ Stops the running stream and closes the window. """
+        """Stops the running stream and closes the window."""
         self.running = False
         if self.stream_task:
             self.stream_task.cancel()
@@ -71,11 +70,11 @@ class StreamPlugin(Plugin):
         return True
 
     async def display(self):
-        """ Toggles the display of the stream. """
+        """Toggles the display of the stream."""
         self.display_stream = not self.display_stream
 
     async def close(self):
-        """ Cleanup when plugin is unloaded."""
+        """Cleanup when plugin is unloaded."""
         await self.stop_stream()
         await super().close()
 
@@ -86,7 +85,7 @@ class StreamPlugin(Plugin):
         self.callbacks.remove(callback_function)
 
     async def _stream_loop(self, ip, port):
-        """ The main async receiving loop. """
+        """The main async receiving loop."""
         while self.running:
             reader = None
             writer = None
@@ -114,13 +113,13 @@ class StreamPlugin(Plugin):
 
                     for callback in self.callbacks:
                         callback(frame)
-                    
+
                     # 4. Handle UI events without blocking asyncio
                     # waitKey(1) processes GUI events. We assume this runs on Main Thread.
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         self.running = False
                         break
-                    
+
                     # Yield control to allow other DroneManager tasks to run
                     await asyncio.sleep(0)
 
@@ -136,7 +135,7 @@ class StreamPlugin(Plugin):
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except:
+                    except Exception:
                         pass
-        
+
         cv2.destroyAllWindows()

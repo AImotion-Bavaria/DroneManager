@@ -49,7 +49,7 @@ class GimbalPlugin(Plugin):
         self.logger.debug("Started Gimbal plugin.")
 
     async def close(self):
-        """ Removes all gimbals """
+        """Removes all gimbals"""
         await super().close()
         coros = [self.remove_gimbals(drone) for drone in self.gimbals]
         await asyncio.gather(*coros)

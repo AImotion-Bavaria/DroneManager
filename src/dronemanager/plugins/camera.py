@@ -1,4 +1,4 @@
-""" Plugin for controlling MAVSDK Cameras """
+"""Plugin for controlling Cameras."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -33,10 +33,10 @@ class CameraPlugin(Plugin):
 
     async def start(self):
         await super().start()
-        self.logger.debug("Starting Camera plugin.")
+        self.logger.debug("Started Camera plugin.")
 
     async def close(self):
-        """ Removes all cameras """
+        """Removes all cameras"""
         await super().close()
         coros = [self.remove_cameras(drone) for drone in self.cameras]
         await asyncio.gather(*coros)

@@ -73,7 +73,7 @@ class FakeBattery:
 
 
 class UAMMission(Mission):
-    """ Multi-Stage mission for the UAM Demo 2025.
+    """Multi-Stage mission for the UAM Demo 2025.
 
     The demo consists of two stages:T
 
@@ -458,7 +458,7 @@ class UAMMission(Mission):
             self.current_stage = UAMStages.Uninitialized
 
     def _get_drones_by_batterylevel(self):
-        """ Note that the stored battery level is negative, as the lowest value is returned by the priority queue."""
+        """Note that the stored battery level is negative, as the lowest value is returned by the priority queue."""
         drones_by_batterylevel = PriorityQueue()
         for drone in self.drones:
             if drone == self._observing_drone:
@@ -467,8 +467,9 @@ class UAMMission(Mission):
         return drones_by_batterylevel
 
     async def _swap_launch_new_drone(self) -> str:
-        """ Pick the drone with the highest battery and try to launch it. If that doesn't work, for example if the drone
-        doesn't arm, try a different drone."""
+        """Pick the drone with the highest battery and try to launch it. If that doesn't work, for example if the drone
+        doesn't arm, try a different drone.
+        """
         drones_by_batterylevel = self._get_drones_by_batterylevel()
         swap_drone = None
         while not swap_drone:
@@ -522,9 +523,10 @@ class UAMMission(Mission):
         self.current_stage = UAMStages.Return
 
     async def _rtb(self):
-        """ Return to base stage.
+        """Return to base stage.
 
-        Returns all drones still out in the field back to their start positions"""
+        Returns all drones still out in the field back to their start positions
+        """
         assert self.ready()
         try:
             # Do the thing, one after another
@@ -624,9 +626,10 @@ class UAMMission(Mission):
         return False
 
     async def set_start(self):
-        """ Set the current stage to the start stage.
+        """Set the current stage to the start stage.
 
-        This should be called/used when the drones are all setup at their starting positions already."""
+        This should be called/used when the drones are all setup at their starting positions already.
+        """
         self.logger.info("Set to Start stage!")
         # Reset all the dynamic attributes
         self._found_poi = None
@@ -638,7 +641,7 @@ class UAMMission(Mission):
         self.current_stage = UAMStages.Start
 
     async def set_uninit(self):
-        """ Set the current stage to Uninitialized.
+        """Set the current stage to Uninitialized.
 
         This function is only useful on a CLI to be able to reset without moving any drones. Some computations are
         performed when the "Start" stage is entered. Setting to Uninitialized and back allows reperforming these.

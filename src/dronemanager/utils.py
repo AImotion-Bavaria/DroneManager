@@ -1,4 +1,4 @@
-""" This module contains generic utility functions used throughout the software, mostly relating to GPS and NED
+"""This module contains generic utility functions used throughout the software, mostly relating to GPS and NED
 positions.
 
 Unless stated otherwise, a GPS coordinate is any indexable sequence with the latitude, longitude and AMSL in that order.
@@ -65,6 +65,13 @@ CONFIG_FILE = DM_INSTALL_DIR.joinpath("config.json")  #Path(__file__).parent.par
 
 
 def get_config():
+    """Returns the location of the configuration json.
+
+    A template config is shipped with DroneManager, which is installed if the file is missing.
+
+    Returns:
+        The path to the config file.
+    """
     if not CONFIG_FILE.exists():
         default_config = files("dronemanager").joinpath(
             "resources/config.json"
@@ -79,7 +86,7 @@ def get_config():
 
 
 def dist_ned(pos1: np.ndarray, pos2: np.ndarray) -> float:
-    """ The euclidian distance between two cartesian points.
+    """The euclidian distance between two cartesian points.
 
     For n-dimensional points, the arrays should have shape (n,).
 
@@ -94,7 +101,7 @@ def dist_ned(pos1: np.ndarray, pos2: np.ndarray) -> float:
 
 
 def dist_gps(gps1: Sequence[float], gps2: Sequence[float]) -> float:
-    """ Approximate euclidian distance between two GPS coordinates.
+    """Approximate euclidian distance between two GPS coordinates.
 
     Haversine functions with WGS84 are used to compute the horizontal component of the distance.
 
@@ -111,7 +118,7 @@ def dist_gps(gps1: Sequence[float], gps2: Sequence[float]) -> float:
 
 
 def heading_ned(pos1: Sequence[float], pos2: Sequence[float]) -> float:
-    """ The heading from one position to another, in degrees.
+    """The heading from one position to another, in degrees.
 
     This is the angle from north, such that moving in that direction from the first point will cross the second point.
     The range is from -180 to +180 with 0 north and +90 east. The two positions must be given as NED.
@@ -128,7 +135,7 @@ def heading_ned(pos1: Sequence[float], pos2: Sequence[float]) -> float:
 
 
 def heading_gps(gps1: Sequence[float], gps2: Sequence[float]) -> float:
-    """ The heading from one GPS position to another, in degrees.
+    """The heading from one GPS position to another, in degrees.
 
     This is the angle from north, such that moving in that direction from the first point will cross the second point.
     The range is from -180 to +180 with 0 north and +90 east. The two positions must be given as GPS coordinates with
@@ -150,7 +157,7 @@ def heading_gps(gps1: Sequence[float], gps2: Sequence[float]) -> float:
 
 
 def relative_gps(gps: Sequence[float], offset: Sequence[float]) -> tuple[float, float, float]:
-    """ Create a GPS coordinate that is shifted from the input GPS by a NED input offset.
+    """Create a GPS coordinate that is shifted from the input GPS by a NED input offset.
 
     Uses haversine functions.
 
@@ -168,8 +175,9 @@ def relative_gps(gps: Sequence[float], offset: Sequence[float]) -> tuple[float, 
     return target_lat, target_long, target_alt
 
 
-def offset_from_gps(origin: Sequence[float], gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, float, float]:
-    """ Given two GPS points, computes the heading and distance between them and then creates a new point
+def offset_from_gps(origin: Sequence[float], gps1: Sequence[float], gps2: Sequence[float]) \
+        -> tuple[float, float, float]:
+    """Given two GPS points, computes the heading and distance between them and then creates a new point
     separated fom a third GPS point by the same heading and distance.
 
     Uses haversine functions.
@@ -190,7 +198,7 @@ def offset_from_gps(origin: Sequence[float], gps1: Sequence[float], gps2: Sequen
 
 
 def ned_from_gps(gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, float, float]:
-    """ Given two GPS points, compute the NED difference between the two positions.
+    """Given two GPS points, compute the NED difference between the two positions.
     Utilizes the same algorithm as PX4 http://mathworld.wolfram.com/AzimuthalEquidistantProjection.html
 
     Args:
@@ -216,13 +224,14 @@ def ned_from_gps(gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, f
     if abs(c) > 0:
         k = c / math.sin(c)
 
-    north = k * (math.cos(lat1_rad)*math.sin(lat2_rad)-math.sin(lat1_rad)*math.cos(lat2_rad)*cos_long_diff) * EARTH_RADIUS
-    east = k * (math.cos(lat2_rad) * math.sin(long2_rad-long1_rad)) * EARTH_RADIUS
+    north = k * (math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * cos_long_diff)
+    east = k * math.cos(lat2_rad) * math.sin(long2_rad-long1_rad)
     down = gps1[2] - gps2[2]
-    return north, east, down
+    return north * EARTH_RADIUS, east * EARTH_RADIUS, down
+
 
 def get_free_port() -> int:
-    """ Get a free network port.
+    """Get a free network port.
 
     The port is not guaranteed to be free once the function returns, but they usually are.
 
@@ -237,7 +246,7 @@ def get_free_port() -> int:
 
 
 def parse_address(string: str) -> tuple[str, str, int]:
-    """ Parses a connection string of the form ``schema://host:appendix``.
+    """Parses a connection string of the form ``schema://host:appendix``.
 
     Also used to ensure that udp://:14540, udp://localhost:14540 and udp://127.0.0.1:14540 are recognized as equivalent.
 
@@ -273,7 +282,7 @@ def parse_address(string: str) -> tuple[str, str, int]:
 
 
 async def coroutine_awaiter(task: asyncio.Future, logger: logging.Logger):
-    """ Awaits the provided coroutine, logging any exceptions.
+    """Awaits the provided coroutine, logging any exceptions.
 
     In DroneManager, there are many functions that run indefinitely without a concrete return value. These functions
     are not "naturally" awaited at any point in the code, which can lead to exceptions being silently dropped.

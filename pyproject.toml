@@ -41,7 +41,35 @@ dm = "dronemanager.app:main"
 [project.optional-dependencies]
 docs = [
     "sphinx",
-    "sphinx_rtd_theme"]
+    "sphinx_rtd_theme",
+]
+tests = [
+    "pytest",
+    "pytest-asyncio",
+    "flake8",
+    "flake8-pyproject",
+    "pydoclint[flake8]",
+    "ruff"
+]
 
 [tool.setuptools.package-data]
 dronemanager = ["resources/*"]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+asyncio_mode = "auto"
+
+[tool.flake8]
+max-line-length = 120
+style = "google"
+
+[tool.ruff]
+extend-exclude = [
+    "src/dronemanager/plugins/NatNet/*",
+]
+
+[tool.ruff.lint]
+select = ["D", ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

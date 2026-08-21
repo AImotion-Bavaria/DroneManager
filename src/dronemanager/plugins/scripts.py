@@ -7,7 +7,7 @@ from dronemanager.plugin import Plugin
 
 
 class ScriptsPlugin(Plugin):
-    
+
     PREFIX = "script"
 
     def __init__(self, dm, logger, name):
@@ -25,7 +25,7 @@ class ScriptsPlugin(Plugin):
         await super().close()
 
     async def execute_script(self, script_name: str):
-        """ Run Script in ./Scripts with given Name"""
+        """Run Script in ./Scripts with given Name"""
         self.logger.info(f"Executing Script {script_name}")
         script_path = os.path.join("Scripts", script_name)
         # Ensure script exists

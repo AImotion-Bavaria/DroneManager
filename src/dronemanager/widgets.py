@@ -23,7 +23,7 @@ class PrintHelpInsteadOfParsingError(Exception):
 
 class ArgParser(argparse.ArgumentParser):
 
-    def __init__(self, *args, logger = None, **kwargs):
+    def __init__(self, *args, logger=None, **kwargs):
         self.logger = logger
         super().__init__(*args, **kwargs)
 
@@ -132,7 +132,7 @@ class InputWithHistory(Input):
 
     async def action_submit(self) -> None:
         submitted_value = self.value
-        await super().action_submit() # Submit the action
+        await super().action_submit()  # Submit the action
         # If we are at some point in our input history and the submission is identical to that history, keep our
         # position in the history. When pressing up we get the same command again, but pressing down gets us the next
         # command in the sequence, rather than two without this special behaviour.
@@ -219,35 +219,35 @@ class DroneOverview(Static):
 
     def _text_lat(self):
         string = self.column_formats[3].format(f"LAT: {self.drone.position_global[0]:{self.COLUMN_WIDTHS[3]-6}.6f}")
-        return Text(string, style=f"bold")
+        return Text(string, style="bold")
 
     def _text_long(self):
         string = self.column_formats[3].format(f"LONG: {self.drone.position_global[1]:{self.COLUMN_WIDTHS[3] - 6}.6f}")
-        return Text(string, style=f"bold")
+        return Text(string, style="bold")
 
     def _text_amsl(self):
         string = self.column_formats[3].format(f"AMSL: {self.drone.position_global[2]:{self.COLUMN_WIDTHS[3] - 6}.2f}")
-        return Text(string, style=f"bold")
+        return Text(string, style="bold")
 
     def _text_p_north(self):
         string = self.column_formats[4].format(f"N: {self.drone.position_ned[0]:{self.COLUMN_WIDTHS[4]-3}.3f}")
-        return Text(string, style=f"bold")
+        return Text(string, style="bold")
 
     def _text_p_east(self):
         string = self.column_formats[4].format(f"E: {self.drone.position_ned[1]:{self.COLUMN_WIDTHS[4]-3}.3f}")
-        return Text(string, style=f"bold")
+        return Text(string, style="bold")
 
     def _text_p_down(self):
         string = self.column_formats[4].format(f"D: {self.drone.position_ned[2]:{self.COLUMN_WIDTHS[4]-3}.3f}")
-        return Text(string, style=f"bold")
+        return Text(string, style="bold")
 
     def _text_v_north(self):
         string = self.column_formats[5].format(f"N: {self.drone.velocity[0]:{self.COLUMN_WIDTHS[5]-3}.3f}")
-        return Text(string, style=f"bold")
+        return Text(string, style="bold")
 
     def _text_v_east(self):
         string = self.column_formats[5].format(f"E: {self.drone.velocity[1]:{self.COLUMN_WIDTHS[5]-3}.3f}")
-        return Text(string, style=f"bold")
+        return Text(string, style="bold")
 
     def _text_v_down(self):
         string = self.column_formats[5].format(f"D: {self.drone.velocity[2]:{self.COLUMN_WIDTHS[5]-3}.3f}")

@@ -1,4 +1,4 @@
-""" Plugins for communication to other software
+"""Plugins for communication to other software
 
 Currently only features a basic UDP server which sends data on connected drones and running missions in a json format.
 """
@@ -20,6 +20,7 @@ MAX_FREQUENCY = 100
 MIN_FREQUENCY = 1
 MAX_DURATION = 60
 
+
 class UDPClient:
 
     def __init__(self, ip, port, frequency, duration):
@@ -31,7 +32,7 @@ class UDPClient:
 
 
 class UDPPlugin(Plugin):
-    """ Communication happens over port 31659. A client will send a json message with the desired frequency and duration
+    """Communication happens over port 31659. A client will send a json message with the desired frequency and duration
     (in seconds) to this port and the server starts answering. Frequency is capped between 1/60 and 20Hz.
 
     Example message from client::
@@ -44,7 +45,7 @@ class UDPPlugin(Plugin):
     """
     PREFIX = "UDP"
 
-    def __init__(self, dm, logger, name, server_port = SERVER_PORT, max_frequency: float = MAX_FREQUENCY,
+    def __init__(self, dm, logger, name, server_port: int = SERVER_PORT, max_frequency: float = MAX_FREQUENCY,
                  min_frequency: float = MIN_FREQUENCY, max_duration: float = MAX_DURATION):
         super().__init__(dm, logger, name)
         self.inport = server_port
@@ -65,7 +66,7 @@ class UDPPlugin(Plugin):
 
         self._stop_threads = False
         self._event_loop = asyncio.get_running_loop()
-        self._listen_thread = threading.Thread(target=self._listen_for_clients, args = (lambda: self._stop_threads,))
+        self._listen_thread = threading.Thread(target=self._listen_for_clients, args=(lambda: self._stop_threads,))
         self._listen_thread.start()
 
     async def close(self):
@@ -77,7 +78,7 @@ class UDPPlugin(Plugin):
         while not stop():
             try:
                 try:
-                    rlist, _ , _ = select.select([self.socket], [], [], 1)
+                    rlist, _, _ = select.select([self.socket], [], [], 1)
                     if len(rlist) == 1:
                         msg, addr = self.socket.recvfrom(1024)
                     else:
@@ -105,12 +106,15 @@ class UDPPlugin(Plugin):
                     client = UDPClient(ip, port, frequency, duration)
                     self.clients[(ip, port)] = client
                     send_task = asyncio.run_coroutine_threadsafe(self._client_sender(client), self._event_loop)
-                    awaiter_task = asyncio.run_coroutine_threadsafe(coroutine_awaiter(send_task, self.logger), self._event_loop)
+                    awaiter_task = asyncio.run_coroutine_threadsafe(coroutine_awaiter(send_task, self.logger),
+                                                                    self._event_loop)
                     self.running_tasks.add(send_task)
                     self.running_tasks.add(awaiter_task)
-                    self.logger.info(f"New client @{ip, port} with frequency {frequency} and duration {math.inf if duration == 0 else duration}.")
+                    self.logger.info(f"New client @{ip, port} with frequency {frequency} "
+                                     f"and duration {math.inf if duration == 0 else duration}.")
                 else:
-                    self.logger.debug(f"Received repeat message from existing client {ip, port}, updating parameters and resetting timer...")
+                    self.logger.debug(f"Received repeat message from existing client {ip, port}, "
+                                      f"updating parameters and resetting timer...")
                     client = self.clients[(ip, port)]
                     client.start_time = time.time()
                     client.duration = duration
@@ -121,7 +125,7 @@ class UDPPlugin(Plugin):
                 self.logger.debug("Dummy")
 
     async def _client_sender(self, client: UDPClient):
-        """ Send data to the client.
+        """Send data to the client.
         """
         # TODO: If we ever have a larger number of clients we should cache the jsons somehow
         # TODO: The OSError for the send command is raised at the recvfrom for some reason, which breaks this client
@@ -146,17 +150,17 @@ class UDPPlugin(Plugin):
         drone_data = {}
         for drone_name in self.dm.drones:
             drone = self.dm.drones[drone_name]
-            # Target Logic 
+            # Target Logic
             target_list = []
             current_target = drone.path_generator.target_position
             if current_target is not None:
                 current_target = current_target.pos.tolist()
-            target_list.append(current_target) 
-      
+            target_list.append(current_target)
+
             # fence logic
             fence_list = []
-            if getattr(drone, 'fence', None): # Check if fence exists and is not None
-                 fence_list = [
+            if getattr(drone, 'fence', None):  # Check if fence exists and is not None
+                fence_list = [
                     drone.fence.north_lower,
                     drone.fence.north_upper,
                     drone.fence.east_lower,
@@ -164,7 +168,7 @@ class UDPPlugin(Plugin):
                     drone.fence.down_lower,
                     drone.fence.down_upper,
                     drone.fence.safety_level
-                 ]
+                ]
             drone_data[drone_name] = {
                 "position": drone.position_ned.tolist(),
                 "gps": drone.position_global.tolist(),

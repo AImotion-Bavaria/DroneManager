@@ -5,7 +5,7 @@ from dronemanager.navigation.core import Fence, Waypoint, WayPointType
 
 
 class RectLocalFence(Fence):
-    """ Class for rectangular fences in the local coordinate frame.
+    """Class for rectangular fences in the local coordinate frame.
 
     Works by defining yis limits: One upper and lower limit for each axis. Waypoints will only be accepted
     if they use local (NED) coordinates and lie within the box between these limits.

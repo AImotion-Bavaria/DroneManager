@@ -104,14 +104,15 @@ class Waypoint:
         return Waypoint(WayPointType.POS_GLOBAL, gps=np.asarray(new_gps), yaw=self.yaw)
 
     def offset_gps(self, initial: "Waypoint", target: "Waypoint"):
-        """ Creates a vector between two waypoints and then creates a new Waypoint offset from this
-        waypoint by the same distance and heading."""
+        """Creates a vector between two waypoints and then creates a new Waypoint offset from this
+        waypoint by the same distance and heading.
+        """
         new_gps = offset_from_gps(self.gps, initial.gps, target.gps)
         return Waypoint(WayPointType.POS_GLOBAL, gps=np.asarray(new_gps), yaw=self.yaw)
 
 
 class Fence(ABC):
-    """ Abstract base class for geo-fence type classes and methods.
+    """Abstract base class for geo-fence type classes and methods.
 
     """
     def __init__(self, *args, **kwargs):
@@ -120,15 +121,16 @@ class Fence(ABC):
 
     @abstractmethod
     def check_waypoint_compatible(self, point: Waypoint) -> bool:
-        """ Should return True if the waypoint fits within the fence, and false otherwise.
+        """Should return True if the waypoint fits within the fence, and false otherwise.
 
         "Fits within" is taken broadly here, a fence can be inclusive, exclusive, around a dynamic obstacle, or
-         anything else. As long as True is returned when the waypoint is "good" and False otherwise, it works."""
+         anything else. As long as True is returned when the waypoint is "good" and False otherwise, it works.
+        """
         pass
 
     @abstractmethod
     def controller_safety(self, drone, forward, right, down, yaw, *args, **kwargs):
-        """ This function should adjust the controller inputs to prevent the drone from exceeding the fence.
+        """This function should adjust the controller inputs to prevent the drone from exceeding the fence.
 
         Inputs are in the body frame of the drone. This function must be fast, expect it to be called at up to 100 Hz.
 
@@ -149,7 +151,7 @@ class Fence(ABC):
     @property
     @abstractmethod
     def bounding_box(self) -> np.ndarray:
-        """ Should return an axis aligned bounding box for other components to use.
+        """Should return an axis aligned bounding box for other components to use.
 
         Output array should have shape (6,) and contain the limits as [north_lower, north_upper, east_lower,
         east_upper, down_lower, down_upper].
@@ -158,8 +160,7 @@ class Fence(ABC):
 
 
 class PathGenerator(ABC):
-    """
-    Abstract base class for path generators.
+    """Abstract base class for path generators.
 
     """
 
@@ -168,12 +169,10 @@ class PathGenerator(ABC):
     """ These determine the type of intermediate waypoints a path generator may produce"""
 
     def __init__(self, drone: "dronemanager.drone.Drone", logger, waypoint_type):
-        """
-
-        Args:
-            drone:
-            logger:
-            waypoint_type:
+        """Args:
+        drone:
+        logger:
+        waypoint_type:
         """
         assert waypoint_type in self.WAYPOINT_TYPES, (f"Invalid waypoint type {waypoint_type} "
                                                       f"for path generator {self.__class__.__name__}")
@@ -183,26 +182,28 @@ class PathGenerator(ABC):
         self.target_position: Waypoint | None = None
 
     def set_target(self, waypoint: Waypoint):
-        """ Sets the target position that we will try to fly towards.
+        """Sets the target position that we will try to fly towards.
         """
         self.target_position = waypoint
 
     @abstractmethod
     async def create_path(self) -> bool:
-        """ Function that performs whatever calculations are initially necessary to be able to produce waypoints.
-        This function may be quite slow. """
+        """Function that performs whatever calculations are initially necessary to be able to produce waypoints.
+        This function may be quite slow.
+        """
 
     @abstractmethod
     def next(self) -> Waypoint:
-        """ The next waypoint, once the follower algorithm asks for another one.
+        """The next waypoint, once the follower algorithm asks for another one.
 
         This function must execute quickly, as it might be called with a high frequency during flight. Path
         followers should call it when they think they have reached the current waypoint. Should return None if the
-        path generator hasn't produced any waypoints or has run out."""
+        path generator hasn't produced any waypoints or has run out.
+        """
 
 
 class PathFollower(ABC):
-    """ Abstract Base class to "follow" a given path and maintain position at waypoints.
+    """Abstract Base class to "follow" a given path and maintain position at waypoints.
 
     A path follower can work with different types of waypoints, but must be able to process WayPoinType.POS_NED,
     as that is the default case when a generator isn't providing waypoints.
@@ -252,7 +253,7 @@ class PathFollower(ABC):
         return self._active
 
     async def follow(self):
-        """ Follows waypoints produced from a path generator by sending setpoints to the drone FC.
+        """Follows waypoints produced from a path generator by sending setpoints to the drone FC.
 
         Requests a new waypoint from the PathGenerator when get_next_waypoint returns True. If the PG does not produce
         a waypoint, holds position instead.
@@ -301,14 +302,15 @@ class PathFollower(ABC):
 
     @abstractmethod
     def get_next_waypoint(self) -> bool:
-        """ Function that determines when to get the next waypoint from the path generator.
+        """Function that determines when to get the next waypoint from the path generator.
 
         PathGenerator.next() is called during the follow loop when this function returns True. It should always
-        return True if we don't have a waypoint already."""
+        return True if we don't have a waypoint already.
+        """
 
     @abstractmethod
     async def set_setpoint(self, waypoint):
-        """ Function that determines the next setpoint required to get to the target waypoint. This function is called
+        """Function that determines the next setpoint required to get to the target waypoint. This function is called
         once every dt seconds using either the next waypoint from the path generator or the drones current
         position.
 

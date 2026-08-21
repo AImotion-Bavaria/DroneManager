@@ -3,7 +3,7 @@ from dronemanager.navigation.core import PathGenerator, WayPointType
 
 
 class DirectTargetGenerator(PathGenerator):
-    """ Simply sends the target waypoint as static setpoints.
+    """Simply sends the target waypoint as static setpoints.
     """
 
     CAN_DO_GPS = True
@@ -20,7 +20,7 @@ class DirectTargetGenerator(PathGenerator):
         return True
 
     def next(self):
-        """ Returns the target position exactly once and then None."""
+        """Returns the target position exactly once and then None."""
         if self.new_target:
             self.new_target = False
             return self.target_position

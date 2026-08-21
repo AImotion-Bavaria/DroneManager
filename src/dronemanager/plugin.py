@@ -1,4 +1,4 @@
-""" Class for extra, loadable plugins.
+"""Class for extra, loadable plugins.
 
 Plugins extend the functionality of DroneManager or Drone Classes by providing extra functions. They can also register
 their own commands to the CLI.
@@ -67,11 +67,11 @@ class Plugin(abc.ABC):
             self.running_tasks.add(asyncio.create_task(coro))
 
     async def start(self):
-        """ Starts any background functions."""
+        """Starts any background functions."""
         self.start_background_functions()
 
     async def close(self):
-        """ Ends all running tasks functions."""
+        """Ends all running tasks functions."""
         cancel_running_tasks(self.running_tasks)
 
 

@@ -1,4 +1,4 @@
-"""Plugin for using controllers and joysticks to control drones with DM.
+"""Plugin for using controllers and joysticks to control drones with DroneManager.
 
 # TODO: Extensive documentation
 # TODO: Description of actions and controller objects, how bindings and physical controllers work with them, etc...

@@ -127,7 +127,7 @@ class DroneComProtocol(ABC):
 
 
 class DroneConfig:
-    """ Convenience class for drone configurations.
+    """Convenience class for drone configurations.
 
     These exist for convenience purposes, to allow people to define drone objects with fixed parameters for easy reuse.
     They can be saved to and loaded from files. A given configuration is used when dm.connect_to_drone is called with
@@ -342,19 +342,20 @@ class Drone(ABC, Generic[CommType]):
         self.telem_logging_handlers.append(handler)
 
     def pause(self):
-        """ Pause task execution by setting self.is_paused to True.
+        """Pause task execution by setting self.is_paused to True.
 
         Note that it is not possible to "pause" what the drone is doing in a general way. What "pausing" a task does or
         if a task can even be paused depends on the specific task and implementation. Subclasses must define and
         implement this behaviour themselves.
         However, pausing is always possible between tasks, and this is the default behaviour for subclasses that do not
         implement any of their own: When paused, drones will finish their current task and then wait until unpaused
-        before beginning the next task."""
+        before beginning the next task.
+        """
         self.is_paused = True
         self.logger.debug("Pausing...")
 
     def resume(self):
-        """ Resume executing tasks. """
+        """Resume executing tasks."""
         self.is_paused = False
         self.logger.debug("Resuming...")
 
@@ -435,7 +436,7 @@ class Drone(ABC, Generic[CommType]):
     @property
     @abstractmethod
     def attitude(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-        """ RPY in degrees"""
+        """RPY in degrees."""
         pass
 
     @property
@@ -473,7 +474,7 @@ class Drone(ABC, Generic[CommType]):
 
     @abstractmethod
     async def takeoff(self, altitude=2.0, allow_in_air=False) -> bool:
-        """ Takes off to the specified altitude above current position.
+        """Takes off to the specified altitude above current position.
 
         Note that altitude is positive.
 
@@ -487,7 +488,7 @@ class Drone(ABC, Generic[CommType]):
         pass
 
     def is_at_waypoint(self, waypoint: Waypoint, pos_tolerance=0.25, vel_tolerance=0.1, yaw_tolerance=1) -> bool:
-        """ Definition of "is at" depends on the waypoint type. At most checks position, yaw and
+        """Definition of "is at" depends on the waypoint type. At most checks position, yaw and
         velocity.
 
         :param waypoint:
@@ -515,9 +516,7 @@ class Drone(ABC, Generic[CommType]):
             raise ValueError("Invalid waypoint type for this function")
 
     def is_at_pos(self, target_pos, tolerance=0.25) -> bool:
-        """
-
-        :param target_pos: Array with target position. If a yaw is also passed (i.e. array length 4), it is ignored.
+        """:param target_pos: Array with target position. If a yaw is also passed (i.e. array length 4), it is ignored.
         :param tolerance: How close we have to be to the target position to be considered "at" it.
         :return:
         """
@@ -548,7 +547,7 @@ class Drone(ABC, Generic[CommType]):
         self.fence = fence_type(self.logger, *args, **kwargs)
 
     def check_waypoint(self, waypoint: "Waypoint"):
-        """ Check if a waypoint is valid and within any geofence (if such a fence is set)"""
+        """Check if a waypoint is valid and within any geofence (if such a fence is set)"""
         try:
             waypoint_valid = not self.fence or (self.fence and self.fence.check_waypoint_compatible(waypoint))
         except Exception as e:
@@ -561,15 +560,16 @@ class Drone(ABC, Generic[CommType]):
         pass
 
     async def wait(self, delay: float):
-        """ Wait delay seconds.
+        """Wait delay seconds.
 
-        This function is useful with scheduling to schedule short waits between moves."""
+        This function is useful with scheduling to schedule short waits between moves.
+        """
         await asyncio.sleep(delay)
 
     @abstractmethod
     async def fly_to(self, local: np.ndarray | None = None, gps: np.ndarray | None = None, yaw: float | None = None,
                      waypoint: Waypoint | None = None, tolerance=0.25):
-        """ Fly to the specified position.
+        """Fly to the specified position.
 
         :param local:
         :param gps:
@@ -582,7 +582,7 @@ class Drone(ABC, Generic[CommType]):
 
     @abstractmethod
     async def move(self, offset: np.ndarray, yaw: float | None = None, use_gps=True, tolerance=0.25):
-        """ Move from the current position by the specified distances.
+        """Move from the current position by the specified distances.
 
         :param offset: A numpy array with the information how much to move along each axis in meters.
         :param yaw:
@@ -614,7 +614,7 @@ class Drone(ABC, Generic[CommType]):
         pass
 
     def clear_queue(self) -> None:
-        """ Clears the action queue.
+        """Clears the action queue.
 
         Does not cancel the current action.
 
@@ -624,7 +624,7 @@ class Drone(ABC, Generic[CommType]):
         self.action_queue.clear()
 
     def cancel_action(self) -> None:
-        """ Cancels the current action task
+        """Cancels the current action task
 
         :return:
         """

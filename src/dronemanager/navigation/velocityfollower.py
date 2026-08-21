@@ -7,7 +7,7 @@ from dronemanager.utils import dist_ned, heading_ned
 
 
 class VelocityFollower(PathFollower):
-    """ Flies directly toward the waypoint facing towards it along the way. Turning towards the target yaw happens
+    """Flies directly toward the waypoint facing towards it along the way. Turning towards the target yaw happens
     after we reach the waypoint. Control happens only through velocity setpoints.
 
     Currently very WIP, drifts off as soon as target positions are reached.
@@ -40,7 +40,7 @@ class VelocityFollower(PathFollower):
                 and self.drone.is_at_heading(self.current_waypoint.yaw))
 
     async def set_setpoint(self, waypoint):
-        """ Always move towards target. Accelerates if we are slower than the max speed and have space to accelerate,
+        """Always move towards target. Accelerates if we are slower than the max speed and have space to accelerate,
         keep speed if we are at max velocity and still some distance away from target, decelerate when we approach
         target.
 

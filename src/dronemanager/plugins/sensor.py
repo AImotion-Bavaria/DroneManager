@@ -1,4 +1,4 @@
-""" Plugin and abstract base class for external sensors, such as weather sensors.
+"""Plugin and abstract base class for external sensors, such as weather sensors.
 
 They're specifically for plugins that connect to and sporadically query some external data source.
 
@@ -40,25 +40,26 @@ class Sensor(Plugin, abc.ABC):
         self.last_data = None
 
     async def start(self):
-        """ This function is called when the sensor plugin is loaded to automatically start any background functions.
+        """This function is called when the sensor plugin is loaded to automatically start any background functions.
         """
         await super().start()
 
     async def close(self):
-        """ This function must end all running asyncio tasks. By default, all tasks in self._running_tasks are
-        cancelled."""
+        """This function must end all running asyncio tasks. By default, all tasks in self._running_tasks are
+        cancelled.
+        """
         await self.disconnect()
         await super().close()
 
     @abc.abstractmethod
     async def connect(self, *args, **kwargs):
-        """ Connect to a sensor."""
+        """Connect to a sensor."""
         self.connect_args = args
         self.connect_kwargs = kwargs
 
     @abc.abstractmethod
     async def get_data(self):
-        """ Should return whatever information the sensor provides,"""
+        """Should return whatever information the sensor provides,"""
         pass
 
     async def log_data(self):
@@ -66,12 +67,12 @@ class Sensor(Plugin, abc.ABC):
 
     @abc.abstractmethod
     async def status(self):
-        """ Should write information about the current status of the sensor to the logger under INFO."""
+        """Should write information about the current status of the sensor to the logger under INFO."""
         pass
 
     @abc.abstractmethod
     async def disconnect(self):
-        """ Disconnect from a sensor. Should handle any socket clearing etc."""
+        """Disconnect from a sensor. Should handle any socket clearing etc."""
         pass
 
     async def reconnect(self):
