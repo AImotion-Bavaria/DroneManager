@@ -261,7 +261,6 @@ class MetaPlugin(Plugin, abc.ABC):
             return False
         self.logger.info(f"Unloading plugin {name}")
         plugin = self._loaded.pop(name)
-        self.logger.debug(f"Attr object{plugin}")
         unload_tasks = set()
         for func in self.ON_UNLOAD_COROS:
             unload_tasks.add(func(name, plugin))
