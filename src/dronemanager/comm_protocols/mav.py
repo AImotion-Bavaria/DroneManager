@@ -1033,20 +1033,6 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         await self.change_flight_mode("hold")
         return True
 
-    async def manual_control_position(self):
-        self.clear_queue()
-        self.cancel_action()
-        await self.path_follower.deactivate()
-        result = await self._error_wrapper(self.mavmanual.start_position_control, ManualControlError)
-        return result
-
-    async def manual_control_altitude(self):
-        self.clear_queue()
-        self.cancel_action()
-        await self.path_follower.deactivate()
-        result = await self._error_wrapper(self.mavmanual.start_altitude_control, ManualControlError)
-        return result
-
     async def set_manual_control_input(self, x, y, z, r):
         result = await self._error_wrapper(self.mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
         return result

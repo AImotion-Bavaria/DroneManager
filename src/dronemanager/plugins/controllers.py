@@ -1082,7 +1082,7 @@ class ControllerPlugin(Plugin):
                 or abs(right_input) > 0.01 or abs(forward_input) > 0.01:
             if drone_obj.flightmode != controller.control_mode:
                 if controller.control_mode is FlightMode.POSCTL:
-                    swap_to_manual_task = asyncio.create_task(drone_obj.manual_control_position())
+                    swap_to_manual_task = asyncio.create_task(drone_obj.change_flight_mode(FlightMode.POSCTL))
                 else:
                     raise NotImplementedError
                 self.running_tasks.add(swap_to_manual_task)
@@ -1290,7 +1290,7 @@ class ControllerPlugin(Plugin):
             self.logger.warning(f"Can't take control, assigned drone {controller.drone} is disconnected!")
         else:
             if controller.control_mode is FlightMode.POSCTL:
-                await self.dm.drones[controller.drone].manual_control_position()
+                await self.dm.drones[controller.drone].change_flight_mode(FlightMode.POSCTL)
             else:
                 raise NotImplementedError
             self.logger.info(f"Controller {controller_id} took control of {controller.drone}")
