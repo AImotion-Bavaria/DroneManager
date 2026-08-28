@@ -300,7 +300,7 @@ class MissionPlugin(MetaPlugin):
     async def status(self):
         """Prints status information for running missions and lists potential mission files."""
         self.logger.info("Status of running missions:")
-        for _, mission in self._loaded:
+        for _, mission in self._loaded.items():
             await mission.status()
         if len(self._loaded) == 0:
             self.logger.info("No running missions!")

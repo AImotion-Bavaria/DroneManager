@@ -281,7 +281,7 @@ class EcoWittSensor(Sensor):
 
     async def status(self):
         """No status as such to report, instead print core information."""
-        self.logger.info(f"EcoWitt sensor as {self.PREFIX} with IP {self.ip}")
+        self.logger.info(f"EcoWitt sensor as {self.PREFIX} with IP {self.ip}. Last data: {self.last_data}")
 
     async def disconnect(self):
         """Dummy function since there is no disconnect procedure."""

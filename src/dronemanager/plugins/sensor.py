@@ -207,8 +207,8 @@ class SensorPlugin(MetaPlugin):
     async def status(self):
         """Status of loaded sensors and sensors that could be loaded."""
         self.logger.info("Status of loaded sensors:")
-        for sensor in self._loaded:
-            await getattr(self, sensor).status()
+        for _, sensor in self._loaded.items():
+            await sensor.status()
         if len(self._loaded) == 0:
             self.logger.info("No loaded sensors!")
         self.logger.info(f"Available sensors for loading: {self.plugin_options()}")

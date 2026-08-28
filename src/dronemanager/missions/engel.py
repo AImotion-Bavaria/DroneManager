@@ -539,8 +539,8 @@ class ENGELDataMission(Mission):
                     await self.gimbal.set_gimbal_mode(YawMode.YAW_FOLLOW)  # Gimbal mode follow so it points forward while flying
                     await self.gimbal.set_gimbal_angles(0.1, 0.1)
                     self._gimbal_frequency = self.dm.drones[self.drone_name].position_update_rate
+                    self.controller = self.dm.controllers.set_drone(self.drone_name)
                     self._register_controller_inputs()
-                    self.dm.controllers.set_drone(self.drone_name)
                     self.logger.info(f"Added drone {name} to mission!")
                     return True
                 else:

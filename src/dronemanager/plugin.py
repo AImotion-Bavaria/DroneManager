@@ -51,7 +51,7 @@ class Plugin(abc.ABC):
     DEPENDENCIES: list[str] = []
     """(class attribute) Other plugins that this plugin depends on."""
 
-    def __init__(self, dm: "dronemanager.core.DroneManager", logger: logging.Logger, name: str, *args, **kwargs):
+    def __init__(self, dm: "dronemanager.core.DroneManager", logger: logging.Logger, name: str, *args, make_child_logger: bool = True, **kwargs):
         """
 
         Args:
@@ -63,7 +63,10 @@ class Plugin(abc.ABC):
         """
         self.dm: "dronemanager.core.DroneManager" = dm
         """The DroneManager instance connected to this plugin."""
-        self.logger: logging.Logger = logger.getChild(self.__class__.__name__)
+        if make_child_logger:
+            self.logger: logging.Logger = logger.getChild(self.__class__.__name__)
+        else:
+            self.logger = logger
         """The parent logger. A child logger with the name of the class is created below this."""
         self.name: str = name
         """The name for this instance of the plugin."""
@@ -124,8 +127,8 @@ class MetaPlugin(Plugin, abc.ABC):
     ON_LOAD_COROS = set()
     ON_UNLOAD_COROS = set()
 
-    def __init__(self, dm: "dronemanager.core.DroneManager", logger, name, *args, **kwargs):
-        super().__init__(dm, logger, name, *args, **kwargs)
+    def __init__(self, dm: "dronemanager.core.DroneManager", logger, name, *args, make_child_logger: bool = True, **kwargs):
+        super().__init__(dm, logger, name, *args, make_child_logger = make_child_logger, **kwargs)
         self._loaded: dict[str, Plugin] = {}
         self._first_time_setup()
 
@@ -300,6 +303,9 @@ class PluginLoader(MetaPlugin):
 
     SUBTYPE: type = Plugin
     """The type that subplugins must subclass to be valid."""
+
+    def __init__(self, dm: "dronemanager.core.DroneManager", logger, name, *args, **kwargs):
+        super().__init__(dm, logger, name, *args, make_child_logger=False, **kwargs)
 
     async def status(self):
         """Dummy implementation."""
