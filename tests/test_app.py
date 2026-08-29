@@ -1,7 +1,7 @@
 """Module to test the terminal interface."""
 from dronemanager.app import DroneApp
 from dronemanager.core import DroneManager
-from dronemanager.drone import DroneMAVSDK
+from dronemanager.drone import DroneMAVSDK, Battery
 
 
 def test_smoke(dm: DroneManager):
@@ -23,6 +23,8 @@ async def test_control_screen(dm: DroneManager):
     app = DroneApp(dm, logger=dm.logger, smoke_test=False)
 
     drone = DroneMAVSDK("tom")
+    drone._batteries[0] = Battery()
+    drone._batteries[0].remaining = 90
     dm.drones["tom"] = drone
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -61,6 +63,14 @@ async def test_control_screen(dm: DroneManager):
         await enter_command("mission-load engel")
         await pilot.pause()
         await enter_command("fake-command which does not exist")
+        drone._batteries[0].remaining = 50
+        await pilot.pause()
+        await enter_command("connect")
+        await pilot.pause()
+        await enter_command("move tom 10 3 5 --fake-argument")
+        await pilot.pause()
+        await enter_command("move tom shf seh sfhjd")
+        drone._batteries[0].remaining = 20
         await pilot.pause()
         await pilot.press("up")
         await pilot.pause()

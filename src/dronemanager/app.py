@@ -431,6 +431,7 @@ class CommandScreen(Screen):
 
         log_parser = command_parsers.add_parser("logs", help="Prints the log directory", logger=self.logger)
         config_parser = command_parsers.add_parser("config", help="Print the config directory", logger=self.logger)
+        config_parser.add_argument("--save", action="store_true", help="Saves the current config if set.")
 
         return parser, command_parsers
 
@@ -561,7 +562,10 @@ class CommandScreen(Screen):
                 elif command == "logs":
                     self.logger.info(LOG_DIR)
                 elif command == "config":
-                    self.logger.info(get_config())
+                    if args.save:
+                        self.dm.save_config()
+                    else:
+                        self.logger.info(get_config())
                 self.app.running_tasks.add(tmp)
                 self.app._awaiter_tasks.add(asyncio.create_task(coroutine_awaiter(tmp, self.logger)))
         except Exception as e:

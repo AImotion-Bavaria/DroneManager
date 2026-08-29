@@ -577,6 +577,12 @@ class DroneManager:
         for handler in self.logging_handlers:
             self.logger.removeHandler(handler)
 
+    def save_config(self, alt_path: str | None = None):
+        if alt_path is None:
+            self.config.to_file(get_config().as_posix())
+        else:
+            self.config.to_file(alt_path)
+
 # PLUGINS ##############################################################################################################
 
     @property

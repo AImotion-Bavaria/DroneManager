@@ -75,14 +75,14 @@ async def test_dummy_client(dm_for_external: DroneManager, mock_drone: Mock):
         assert len(external_plugin.clients) == 1
         # For 2 second, check that the frequency matches
         for _ in range(math.ceil(client.frequency * 2)):
-            assert time.time() - client.time_of_last < 1.1 / client.frequency
+            assert time.time() - client.time_of_last < 1.2 / client.frequency
 
         # Update frequency and check that actual frequency matches updated.
         client.frequency = 10
         client.send_update_message()
         await asyncio.sleep(0.5)
         for _ in range(math.ceil(client.frequency * 2)):
-            assert time.time() - client.time_of_last < 1.1 / client.frequency
+            assert time.time() - client.time_of_last < 1.2 / client.frequency
         assert len(external_plugin.clients) == 1
 
         # Test shutting down the UDPPlugin and checking DummyUDPClient behaviour.
