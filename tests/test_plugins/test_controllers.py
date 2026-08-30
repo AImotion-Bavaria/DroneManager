@@ -1,6 +1,7 @@
 """Tests for the controller plugin."""
 import copy
 from collections import OrderedDict
+import pathlib
 import pytest
 from typing import Any, AsyncGenerator
 
@@ -233,6 +234,7 @@ async def test_mapping_saving_and_loading(dm_with_controller: DroneManager, ps4_
         ps4_mapping: An InputMapping matching a PS4 controller used for testing.
     """
     controller_plugin = getattr(dm_with_controller, "controllers")
+    test_config_file_path = pathlib.Path("tests/test_config.json")
 
     # Adding a new mapping
     test_mapping = copy.deepcopy(ps4_mapping)
@@ -243,17 +245,20 @@ async def test_mapping_saving_and_loading(dm_with_controller: DroneManager, ps4_
 
     # Saving the mapping
     await controller_plugin.save_current_mappings()
-    dm_with_controller.save_config("tests/test_config.json")
+    dm_with_controller.save_config(test_config_file_path.as_posix())
 
     # Removing the new mapping
     controller_plugin.mappings.pop("Test_mapping")
     assert len(controller_plugin.mappings) == n_mappings_initial
 
     # Loading the new config and the mappings from that config
-    new_config = DMConfig.from_file("tests/test_config.json")
+    new_config = DMConfig.from_file(test_config_file_path.as_posix())
     dm_with_controller.config = new_config
     controller_plugin.load_mappings_from_config()
     assert len(controller_plugin.mappings) == n_mappings_initial + 1
     assert "Test_mapping" in controller_plugin.mappings
     controller_plugin.mappings["Test_mapping"].name = ps4_mapping.name
     assert ps4_mapping == controller_plugin.mappings["Test_mapping"]
+
+    # Remove test config file.
+    test_config_file_path.unlink()

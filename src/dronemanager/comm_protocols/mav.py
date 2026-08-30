@@ -1014,7 +1014,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             if ema_alt_error < error_thresh and time.time() > start_time + min_time:
                 going_down = False
             old_alt = cur_alt
-            target_pos[2] = cur_alt + 0.5
+            target_pos[2] = cur_alt + 0.4
             await self.set_setpoint(Waypoint(WayPointType.POS_VEL_NED, pos=target_pos[:3], vel=np.asarray([0, 0, 0.3]), yaw=target_pos[3]))
             await asyncio.sleep(1/update_freq)
         self.logger.info("Landed!")
