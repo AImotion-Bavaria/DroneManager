@@ -539,6 +539,15 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock], mock_drone:
     await controller_plugin.assign_drone("mock", 5)
     assert controller_plugin.controllers[31].drone is None and controller_plugin.controllers[5].drone == "mock"
 
+    # Unassign the drone
+    await controller_plugin.unassign_drone("mock")
+    assert controller_plugin.controllers[5].drone is None
+    await controller_plugin.unassign_drone("mock")
+
+    # Reassign it
+    await controller_plugin.assign_drone("mock", 5)
+    assert controller_plugin.controllers[5].drone == "mock"
+
     # "Unplug" the test controllers
     mock_pygame.joystick.get_count.return_value = 0
     test_event_queue.put(MockEvent(mock_pygame.JOYDEVICEREMOVED, 0, 31))
