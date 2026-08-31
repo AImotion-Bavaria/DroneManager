@@ -133,14 +133,14 @@ class UDPPlugin(Plugin):
         self.min_frequency: float = min_frequency  #: The minimum requestable frequency.
         self.max_duration: float = max_duration  #: the maximum requestable duration for a single request.
 
-        outsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.outsocket: socket.socket = outsock  #: The socket for outgoing messages.
+        out_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.out_socket: socket.socket = out_sock  #: The socket for outgoing messages.
         self.clients: dict[tuple[str, int], UDPClient] = {}  #: A dictionary of clients by their addresses.
         self.background_functions: list[Coroutine] = [
         ]
 
         self._stop_threads = False  #: Set to True when we stop
-        self._event_loop = asyncio.get_running_loop()  #: Reference to event loop for callback coroutines.
+        self._event_loop = asyncio.get_running_loop()  #: Reference to the event loop for callback coroutines.
         #: The thread listening for incoming messages.
         self._listen_thread = threading.Thread(target=self._listen_for_clients, args=(lambda: self._stop_threads,))
         self._listen_thread.start()
@@ -153,7 +153,7 @@ class UDPPlugin(Plugin):
         self._stop_threads = True
         self.socket.close()
         await asyncio.to_thread(self._listen_thread.join)
-        self.outsocket.close()
+        self.out_socket.close()
         await super().close()
 
     async def status(self):
@@ -317,7 +317,7 @@ class UDPPlugin(Plugin):
         if port is None:
             port = self.server_port
         try:
-            self.outsocket.sendto(msg.encode("utf-8"), (ip, port))
+            self.out_socket.sendto(msg.encode("utf-8"), (ip, port))
         except Exception as e:
             self.logger.warning("Exception sending out data! Check the log for details.")
             self.logger.debug(repr(e), exc_info=True)

@@ -31,7 +31,7 @@ class StreamPlugin(Plugin):
         """Create StreamPlugin.
 
         Args:
-            dm: The assocciated DroneManager instance.
+            dm: The associated DroneManager instance.
             logger: The logger for error output.
             name: The name of the plugin.
             ip: Default IP, can be set via config.json 'plugin_settings'.
@@ -133,7 +133,6 @@ class StreamPlugin(Plugin):
             port: The port from which we are receiving the stream.
         """
         while self.running:
-            reader = None
             writer = None
             try:
                 # Open async TCP connection
@@ -150,8 +149,8 @@ class StreamPlugin(Plugin):
                     image_data = await reader.readexactly(length)
 
                     # 3. Decode and Show
-                    nparr = np.frombuffer(image_data, np.uint8)
-                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    np_arr = np.frombuffer(image_data, np.uint8)
+                    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
                     if frame is not None and self.display_stream:
                         # Display window title includes plugin name
@@ -185,7 +184,7 @@ class StreamPlugin(Plugin):
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.logger.debug(repr(e), exc_info=True)
 
         cv2.destroyAllWindows()

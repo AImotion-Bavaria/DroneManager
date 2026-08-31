@@ -273,10 +273,10 @@ class MissionPlugin(MetaPlugin):
     """Valid sub-plugins must have class names ending with this string."""
 
     NAMESPACE: str = "missions"
-    """Modules with subplugins have this prepended to their import to reduce collisions."""
+    """Modules with sub-plugins have this prepended to their import to reduce collisions."""
 
     SUBTYPE: type = Mission
-    """The type that subplugins must subclass to be valid."""
+    """The type that sub-plugins must subclass to be valid."""
 
     PREFIX = "mission"
     """The prefix for the CLI commands, "mission" by default."""
