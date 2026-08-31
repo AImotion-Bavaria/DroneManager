@@ -1,7 +1,6 @@
 """Tests for the controller plugin."""
 import asyncio
 import copy
-import logging
 from collections import OrderedDict
 import pathlib
 import pytest
@@ -65,29 +64,67 @@ def ps4_mapping() -> InputMapping:
 
 
 class FakeJoystick:
-    def __init__(self, instance_id = 0, name="Test Controller"):
-        self.instance_id = instance_id
-        self.name = name
-        self.axes = [0.0, 0.64, -0.91, 0.0, 0.0, 0.0]
-        self.rumbles = []
-        self.quit_called = False
+    """A fake joystick class to test pygame with."""
+    def __init__(self, instance_id: int = 0, name: str = "Test Controller"):
+        """Create the fake joystick object.
 
-    def get_instance_id(self):
+        Args:
+            instance_id: The instance ID for this fake joystick.
+            name: The name of this fake joystick.
+        """
+        self.instance_id: int = instance_id  #: Instance ID for the mock joystick.
+        self.name: str = name  #: Instance ID for the mock joystick.
+        self.axes: list[float] = [0.0, 0.64, -0.91, 0.0, 0.0, 0.0]  #: Mock axes output. Should be between -1 and 1.
+        self.rumbles: list[tuple[float, float, float]] = []  #: A list of all calls to the rumble function.
+        self.quit_called: bool = False  #: If quit was called for this joystick.
+
+    def get_instance_id(self) -> int:
+        """Replacement function.
+
+        Returns:
+            The set fake instance id.
+        """
         return self.instance_id
 
-    def get_name(self):
+    def get_name(self) -> str:
+        """Replacement function.
+
+        Returns:
+            The set fake name.
+        """
         return self.name
 
-    def get_numaxes(self):
+    def get_numaxes(self) -> int:
+        """Replacement function.
+
+        Returns:
+            The number of axes that we have defined outputs for.
+        """
         return len(self.axes)
 
-    def get_axis(self, axis):
+    def get_axis(self, axis: int) -> float:
+        """Replacement function.
+
+        Args:
+            axis: The axis ID whose fake output we get.
+
+        Returns:
+            The fake output for the provided axis.
+        """
         return self.axes[axis]
 
-    def rumble(self, low_frequency, high_frequency, duration):
+    def rumble(self, low_frequency: float, high_frequency: float, duration: float):
+        """Replacement function, appends calls with arguments to :py:attr:`rumbles`.
+
+        Args:
+            low_frequency: Low end of fake rumble.
+            high_frequency: High end of fake rumble.
+            duration: Duration for fake rumble.
+        """
         self.rumbles.append((low_frequency, high_frequency, duration))
 
     def quit(self):
+        """Replacement function, just tracks whether it was called for this object or not."""
         self.quit_called = True
 
 
@@ -215,7 +252,8 @@ def test_mapping_functions(ps4_mapping: InputMapping):
     with pytest.raises(KeyError):
         ps4_mapping.bind_action("Action which does not exist", 3)
 
-    ps4_mapping.add_action("Test_action_axis", action_type=ActionInputType.Axis, input_id=[5], func=dummy_func)
+    ps4_mapping.add_action("Test_action_axis", action_type=ActionInputType.Axis, input_id=[5],
+                           func=dummy_func)
     assert "Test_action_axis" in ps4_mapping._actions
     assert dummy_func in ps4_mapping._axis_actions_by_function
     assert ps4_mapping._axis_actions_by_function[dummy_func].label == "Test_action_axis"
@@ -258,7 +296,8 @@ def test_mapping_functions(ps4_mapping: InputMapping):
     target_input_mapping["Square"] = " - "
     target_input_mapping["Triangle"] = " - "
     target_input_mapping["Share button"] = " - "
-    target_input_mapping["Playstation button"] = ["Control - on Hold", "Doubled button", "Doubled button inverted - on Hold"]
+    target_input_mapping["Playstation button"] = ["Control - on Hold", "Doubled button",
+                                                  "Doubled button inverted - on Hold"]
     target_input_mapping["Options button"] = " - "
     target_input_mapping["Left stick press"] = " - "
     target_input_mapping["Right stick press"] = " - "
@@ -272,7 +311,8 @@ def test_mapping_functions(ps4_mapping: InputMapping):
     assert target_input_mapping == input_action_mapping
 
 
-async def test_mapping_saving_and_loading(dm_with_controller: tuple[DroneManager, MagicMock], ps4_mapping: InputMapping):
+async def test_mapping_saving_and_loading(dm_with_controller: tuple[DroneManager, MagicMock],
+                                          ps4_mapping: InputMapping):
     """Test adding a mapping, saving it, and then loading it again.
 
     Args:
@@ -311,7 +351,14 @@ async def test_mapping_saving_and_loading(dm_with_controller: tuple[DroneManager
     test_config_file_path.unlink()
 
 
-async def test_plugin(dm_with_controller, mock_drone, ps4_mapping):
+async def test_plugin(dm_with_controller: tuple[DroneManager, Mock], mock_drone: Mock, ps4_mapping: InputMapping):
+    """Big ugly test function for most parts of the plugin class.
+
+    Args:
+        dm_with_controller: A DroneManager instance with the controller plugin already loaded.
+        mock_drone: A mock drone object.
+        ps4_mapping: A fixed InputMapping.
+    """
     manager, mock_pygame = dm_with_controller
     controller_plugin = getattr(manager, "controllers")
     ps4_mapping.name = "Test Mapping"
@@ -322,7 +369,15 @@ async def test_plugin(dm_with_controller, mock_drone, ps4_mapping):
     mock_joystick1 = FakeJoystick(instance_id=31, name="Test Controller")
     mock_joystick2 = FakeJoystick(instance_id=5, name="PS4 Controller")
 
-    def joystick_return_function(dev_id):
+    def joystick_return_function(dev_id: int) -> FakeJoystick:
+        """Dummy function returning fake joystick objects for given "device" IDs.
+
+        Args:
+            dev_id: The fake device ID.
+
+        Returns:
+            One of two fixed fake joystick objects.
+        """
         if dev_id == 0:
             return mock_joystick1
         else:
@@ -349,31 +404,31 @@ async def test_plugin(dm_with_controller, mock_drone, ps4_mapping):
 
     # Setting a mapping
     controller_plugin.mappings["Test Mapping"] = ps4_mapping
-    res = await controller_plugin.set_mapping(5, "Test Mapping")
+    await controller_plugin.set_mapping(5, "Test Mapping")
     assert controller_plugin.controllers[31].input_mapping is None
-    res = await controller_plugin.set_mapping(31, "Fake mapping")
+    await controller_plugin.set_mapping(31, "Fake mapping")
     assert controller_plugin.controllers[31].input_mapping is None
     controller_plugin.controllers[31].in_control = True
-    res = await controller_plugin.set_mapping(31, "Test Mapping")
+    await controller_plugin.set_mapping(31, "Test Mapping")
     assert controller_plugin.controllers[31].input_mapping is None
     controller_plugin.controllers[31].in_control = False
-    res = await controller_plugin.set_mapping(31, "Test Mapping")
+    await controller_plugin.set_mapping(31, "Test Mapping")
     assert controller_plugin.controllers[31].input_mapping.name == "Test Mapping"
 
     # Status
-    res = await controller_plugin.status()
+    await controller_plugin.status()
 
     # Toggle input logging
-    res = await controller_plugin.check_controller_inputs(31)
+    await controller_plugin.check_controller_inputs(31)
 
     # Identify
-    res = await controller_plugin.identify()
+    await controller_plugin.identify()
     await asyncio.sleep(0.2)
     assert len(mock_joystick1.rumbles) == 4
 
     # Mapping logging
-    res = await controller_plugin.view_mapping("Test Mapping")
-    res = await controller_plugin.view_inputs("Test Mapping")
+    _ = await controller_plugin.view_mapping("Test Mapping")
+    _ = await controller_plugin.view_inputs("Test Mapping")
 
     # Add a mock_drone
     mock_drone.flightmode = FlightMode.HOLD
@@ -391,23 +446,43 @@ async def test_plugin(dm_with_controller, mock_drone, ps4_mapping):
 
     mock_axis_func.side_effect = RuntimeError("Test error")
 
-    class MockEventQueue:
-        def __init__(self, queue: Queue):
-            self.queue = queue
-
-        def get(self):
-            if self.queue.empty():
-                return []
-            else:
-                return [self.queue.get()]
-
     class MockEvent:
-        def __init__(self, event_type, button_id, controller_id):
+        """A mock pygame event class."""
+        def __init__(self, event_type: int, button_id: int, controller_id: int):
+            """Create this MockEvent.
+
+            Args:
+                event_type: The type of pygame event to mock.
+                button_id: The button ID this event refers to. Ignored for non-button events.
+                controller_id: The mock controller ID that the event will be faked from.
+            """
             self.type = event_type
             self.dict = {
                 "button": button_id,
                 "instance_id": controller_id,
             }
+
+    class MockEventQueue:
+        """Mock event queue for use with pygame.event.get()."""
+
+        def __init__(self, queue: Queue):
+            """Create the mock event queue.
+
+            Args:
+                queue: Queue object for the internal use. Add mock events to this object to make them available.
+            """
+            self.queue = queue
+
+        def get(self) -> list[MockEvent]:
+            """Grabs an item from the internal queue or returns an empty list if the queue is empty.
+
+            Returns:
+                An item from the queue as a list for use with pygame.event.get() or an empty list if the queue is empty.
+            """
+            if self.queue.empty():
+                return []
+            else:
+                return [self.queue.get()]
 
     test_event_queue = Queue()
     mock_pygame.event.get.side_effect = MockEventQueue(test_event_queue).get
@@ -462,7 +537,7 @@ async def test_plugin(dm_with_controller, mock_drone, ps4_mapping):
     # Try to reassign now
     assert not controller_plugin.controllers[31].in_control and controller_plugin.controllers[31].drone == "mock"
     await controller_plugin.assign_drone("mock", 5)
-    assert controller_plugin.controllers[31].drone is None and controller_plugin.controllers[5].drone is "mock"
+    assert controller_plugin.controllers[31].drone is None and controller_plugin.controllers[5].drone == "mock"
 
     # "Unplug" the test controllers
     mock_pygame.joystick.get_count.return_value = 0
@@ -470,3 +545,5 @@ async def test_plugin(dm_with_controller, mock_drone, ps4_mapping):
     test_event_queue.put(MockEvent(mock_pygame.JOYDEVICEREMOVED, 0, 5))
     await asyncio.sleep(0.1)
     assert len(controller_plugin.controllers) == 0
+
+    assert mock_joystick1.quit_called and mock_joystick2.quit_called

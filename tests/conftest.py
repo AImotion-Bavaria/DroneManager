@@ -141,9 +141,15 @@ def mock_drone() -> Mock:
     mockdrone.arm = AsyncMock()
 
     def flight_mode_change_posctrl():
+        """Mock function which changes the flight mode posctrl."""
         mockdrone.flightmode = FlightMode.POSCTL
 
-    def change_flight_mode_side_effect(flightmode):
+    def change_flight_mode_side_effect(flightmode: FlightMode):
+        """Mock flight mode chaning function.
+
+        Args:
+            flightmode: The new flight mode.
+        """
         mockdrone.flightmode = flightmode
 
     mockdrone.manual_control_position.side_effect = flight_mode_change_posctrl
