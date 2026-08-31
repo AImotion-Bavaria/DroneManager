@@ -12,7 +12,7 @@ import cv2
 from mavsdk import System
 
 from dronemanager.core import DroneManager
-from dronemanager.drone import DroneMAVSDK, DroneConfig, FlightMode
+from dronemanager.drone import DroneMAVSDK, DroneConfig, FlightMode, DroneParams
 from dronemanager.navigation.core import PathGenerator, PathFollower, Waypoint, WayPointType
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 
@@ -126,10 +126,29 @@ def mock_drone() -> Mock:
     mockdrone.position_global = np.asarray([-1, -1, 300], dtype=np.float64)
     mockdrone.velocity = np.asarray([0.1, 0.2, 0.3], dtype=np.float64)
     mockdrone.attitude = np.asarray([5.0, 10.0, 20.0], dtype=np.float64)
-    mockdrone.flightmode = FlightMode.POSCTL
+    mockdrone.flightmode = FlightMode.HOLD
     mockdrone.is_connected = True
     mockdrone.is_armed = True
     mockdrone.in_air = True
     mockdrone.fence = RectLocalFence(0, 3, -1, 4, -10, -1)
+    mockdrone.drone_params = DroneParams()
+    mockdrone.drone_params.max_h_vel = 3
+    mockdrone.drone_params.max_up_vel = 1
+    mockdrone.drone_params.max_down_vel = 1
+    mockdrone.drone_params.max_yaw_rate = 30
+
+    # Function mocks
+    mockdrone.arm = AsyncMock()
+
+    def flight_mode_change_posctrl():
+        mockdrone.flightmode = FlightMode.POSCTL
+
+    def change_flight_mode_side_effect(flightmode):
+        mockdrone.flightmode = flightmode
+
+    mockdrone.manual_control_position.side_effect = flight_mode_change_posctrl
+    mockdrone.set_manual_control_input = AsyncMock()
+    mockdrone.execute_task = AsyncMock()
+    mockdrone.change_flight_mode.side_effect = change_flight_mode_side_effect
 
     return mockdrone

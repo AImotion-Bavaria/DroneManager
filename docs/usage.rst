@@ -36,6 +36,7 @@ and type::
 
 This creates a new connection using the default values from the configuration file and tries to add the first drone
 found, assigning it the name ``tom``. You can provide any name, it will be used to identify the drone in other commands.
+Other parameters allow arbitrary connection strings, setting telemetry frequency and more!
 
 .. note::
    Typing any command with ``--help`` or ``-h`` prints a help string for that command.
@@ -44,7 +45,8 @@ found, assigning it the name ``tom``. You can provide any name, it will be used 
    As a convenience feature, we provide a config file in which drone names and their connection string as well as other
    parameters may be saved. When entered with a name from this config file, the connect function will use the parameters
    from the file unless overridden in the command line. We strongly recommend using this feature when using multiple
-   drones at once, to prevent confusion about which name refers to which physical drone.
+   drones at once, to prevent confusion about which name refers to which physical drone. By default this file is
+   located in the users Documents folder. You can view the location by entering ``logs`` in the CLI.
 
 After a short moment, you should see text pop in on the status pane showing information for our newly connected drone.
 There may be an error about callbacks being dropped as the drone is being added. This is not unexpected due to the
