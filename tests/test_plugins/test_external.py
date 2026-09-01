@@ -3,7 +3,7 @@ import asyncio
 import math
 import pytest
 import time
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, Callable
 from unittest.mock import Mock
 
 from dronemanager.core import DroneManager
@@ -47,7 +47,7 @@ async def test_frequency_example(dm_for_external: DroneManager):
     await frequency_example("127.0.0.1", DEFAULT_SERVER_PORT)
 
 
-async def test_dummy_client(dm_for_external: DroneManager, mock_drone: Mock):
+async def test_dummy_client(dm_for_external: DroneManager, mock_drone_getter: Callable[[int], Mock]):
     """Test the dummy client and UDP plugin in one.
 
     Starts a client, sends messages to the plugin and checks that the client is receiving messages and the plugin is
@@ -56,8 +56,9 @@ async def test_dummy_client(dm_for_external: DroneManager, mock_drone: Mock):
 
     Args:
         dm_for_external: The DroneManager instance for the test.
-        mock_drone: A mock drone object for the test
+        mock_drone_getter: A function to get mock drone objects for tests.
     """
+    mock_drone = mock_drone_getter(1)
     # Load a mission and add a drone.
     await dm_for_external.load("mission")
     assert hasattr(dm_for_external, "mission")
@@ -65,7 +66,7 @@ async def test_dummy_client(dm_for_external: DroneManager, mock_drone: Mock):
     external_plugin = getattr(dm_for_external, "external")
     await mission_plugin.load("engel")
     assert hasattr(dm_for_external, "engel")
-    dm_for_external.drones["mock"] = mock_drone
+    dm_for_external.drones[mock_drone.name] = mock_drone
 
     with DummyUDPClient("127.0.0.1", DEFAULT_SERVER_PORT) as client:
         client.frequency = 5

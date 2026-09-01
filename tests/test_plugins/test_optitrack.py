@@ -4,7 +4,7 @@ import logging
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, Callable
 from unittest.mock import Mock, patch
 
 from dronemanager.core import DroneManager
@@ -183,13 +183,15 @@ async def test_optitrack_connect(dm_with_optitrack_mock: tuple[DroneManager, Moc
     assert optitrack.client is client
 
 
-async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone: Mock):
+async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager, Mock],
+                                     mock_drone_getter: Callable[[int], Mock]):
     """Tests core functionality around processing Motive data.
 
     Args:
         dm_with_optitrack_mock: The DroneManager instance with loaded optitrack plugin.
-        mock_drone: The mocked drone object to be used during the tests.
+        mock_drone_getter: A function to get mocked drone objects for tests.
     """
+    mock_drone = mock_drone_getter(1)
     dm, client = dm_with_optitrack_mock
     optitrack = getattr(dm, "optitrack")
 
@@ -197,7 +199,7 @@ async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager,
     await optitrack.set_coordinates_body("x", "z", "-y")
     await optitrack.set_coordinates_world("z", "-x", "-y")
 
-    dm.drones["mock"] = mock_drone
+    dm.drones[mock_drone.name] = mock_drone
 
     assert len(optitrack.available_bodies) == 0
     frame_counter = 0
@@ -229,31 +231,33 @@ async def test_rigid_body_processing(dm_with_optitrack_mock: tuple[DroneManager,
     assert np.max(np.abs(out_pos - target_pos)) < 1e-6 and np.max(np.abs(out_rot - target_rotation)) < 1e-6
 
     # Callback with drone
-    await optitrack.add_drone("mock", 0)
+    await optitrack.add_drone(mock_drone.name, 0)
     assert len(optitrack._drone_id_mapping) == 1
     frame_counter = do_callback(frame_counter)
     await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
     mock_drone.send_external_tracking_data.assert_called_once()
 
     # Remove drone and check callback
-    await optitrack.remove_drone("mock")
+    await optitrack.remove_drone(mock_drone.name)
     assert len(optitrack._drone_id_mapping) == 0
     do_callback(frame_counter)
     await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
     mock_drone.send_external_tracking_data.assert_called_once()
 
 
-async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock], mock_drone: Mock):
+async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock],
+                                mock_drone_getter: Callable[[int], Mock]):
     """Tests assorted error handling components of the plugin.
 
     Args:
         dm_with_optitrack_mock: The DroneManager instance with loaded optitrack plugin.
-        mock_drone: The mocked drone object to be used during the tests.
+        mock_drone_getter: A function to get mocked drone objects for tests.
     """
+    mock_drone = mock_drone_getter(1)
     dm, client = dm_with_optitrack_mock
     optitrack = getattr(dm, "optitrack")
 
-    dm.drones["mock"] = mock_drone
+    dm.drones[mock_drone.name] = mock_drone
     frame_counter = 0
 
     def do_callback(frame_count: int) -> int:
@@ -272,7 +276,7 @@ async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock
         return frame_count
 
     frame_counter = do_callback(frame_counter)  # Do the callback once so we have tracks
-    await optitrack.add_drone("mock", 0)
+    await optitrack.add_drone(mock_drone.name, 0)
 
     # Test Mocap errors.
     mock_drone.system.mocap.set_vision_position_estimate.side_effect = \
@@ -282,7 +286,7 @@ async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock
     assert optitrack._err_count == 1
 
     # Remove the drone and test that callback removes it properly.
-    await dm.disconnect("mock")
+    await dm.disconnect(mock_drone.name)
     assert len(optitrack._drone_id_mapping) == 1
     do_callback(frame_counter)
     await asyncio.sleep(0.1)

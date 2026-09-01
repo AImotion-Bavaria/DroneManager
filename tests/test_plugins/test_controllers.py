@@ -5,8 +5,8 @@ from collections import OrderedDict
 import pathlib
 import pytest
 from queue import Queue
-from typing import Any, AsyncGenerator
-from unittest.mock import patch, MagicMock, Mock
+from typing import Any, AsyncGenerator, Callable
+from unittest.mock import MagicMock, Mock, patch
 
 from dronemanager.core import DroneManager, DMConfig
 from dronemanager.drone import FlightMode
@@ -351,14 +351,57 @@ async def test_mapping_saving_and_loading(dm_with_controller: tuple[DroneManager
     test_config_file_path.unlink()
 
 
-async def test_plugin(dm_with_controller: tuple[DroneManager, Mock], mock_drone: Mock, ps4_mapping: InputMapping):
+class MockEvent:
+    """A mock pygame event class."""
+    def __init__(self, event_type: int, button_id: int, controller_id: int):
+        """Create this MockEvent.
+
+        Args:
+            event_type: The type of pygame event to mock.
+            button_id: The button ID this event refers to. Ignored for non-button events.
+            controller_id: The mock controller ID that the event will be faked from.
+        """
+        self.type = event_type
+        self.dict = {
+            "button": button_id,
+            "instance_id": controller_id,
+        }
+
+
+class MockEventQueue:
+    """Mock event queue for use with pygame.event.get()."""
+
+    def __init__(self, queue: Queue):
+        """Create the mock event queue.
+
+        Args:
+            queue: Queue object for the internal use. Add mock events to this object to make them available.
+        """
+        self.queue = queue
+
+    def get(self) -> list[MockEvent]:
+        """Grabs an item from the internal queue or returns an empty list if the queue is empty.
+
+        Returns:
+            An item from the queue as a list for use with pygame.event.get() or an empty list if the queue is empty.
+        """
+        if self.queue.empty():
+            return []
+        else:
+            return [self.queue.get()]
+
+
+async def test_plugin(dm_with_controller: tuple[DroneManager, Mock],
+                      mock_drone_getter: Callable[[int], Mock],
+                      ps4_mapping: InputMapping):
     """Big ugly test function for most parts of the plugin class.
 
     Args:
         dm_with_controller: A DroneManager instance with the controller plugin already loaded.
-        mock_drone: A mock drone object.
+        mock_drone_getter: Function to create mock drone objects.
         ps4_mapping: A fixed InputMapping.
     """
+    mock_drone = mock_drone_getter(1)
     manager, mock_pygame = dm_with_controller
     controller_plugin = getattr(manager, "controllers")
     ps4_mapping.name = "Test Mapping"
@@ -432,11 +475,11 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock], mock_drone:
 
     # Add a mock_drone
     mock_drone.flightmode = FlightMode.HOLD
-    manager.drones["mock"] = mock_drone
+    manager.drones[mock_drone.name] = mock_drone
     await asyncio.sleep(0.3)
     # Check that the drone and controller were assigned
     assert len(controller_plugin.drones) == 1
-    assert controller_plugin.controllers[31].drone == "mock"
+    assert controller_plugin.controllers[31].drone == mock_drone.name
     # Check that the drone flightmode posctrl function was called
     mock_drone.manual_control_position.assert_called_once()
     # Check that we called the stick input function.
@@ -444,45 +487,14 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock], mock_drone:
     # Check that the axis input was called
     mock_axis_func.assert_called_with([0.6, 0.9])
 
+    # Function which breaks
     mock_axis_func.side_effect = RuntimeError("Test error")
-
-    class MockEvent:
-        """A mock pygame event class."""
-        def __init__(self, event_type: int, button_id: int, controller_id: int):
-            """Create this MockEvent.
-
-            Args:
-                event_type: The type of pygame event to mock.
-                button_id: The button ID this event refers to. Ignored for non-button events.
-                controller_id: The mock controller ID that the event will be faked from.
-            """
-            self.type = event_type
-            self.dict = {
-                "button": button_id,
-                "instance_id": controller_id,
-            }
-
-    class MockEventQueue:
-        """Mock event queue for use with pygame.event.get()."""
-
-        def __init__(self, queue: Queue):
-            """Create the mock event queue.
-
-            Args:
-                queue: Queue object for the internal use. Add mock events to this object to make them available.
-            """
-            self.queue = queue
-
-        def get(self) -> list[MockEvent]:
-            """Grabs an item from the internal queue or returns an empty list if the queue is empty.
-
-            Returns:
-                An item from the queue as a list for use with pygame.event.get() or an empty list if the queue is empty.
-            """
-            if self.queue.empty():
-                return []
-            else:
-                return [self.queue.get()]
+    mock_drone.set_manual_control_input.reset_mock()
+    mock_drone.set_manual_control_input.assert_not_called()
+    # Check that stick input still works
+    await asyncio.sleep(0.1)
+    mock_drone.set_manual_control_input.assert_called()
+    mock_axis_func.side_effect = None
 
     test_event_queue = Queue()
     mock_pygame.event.get.side_effect = MockEventQueue(test_event_queue).get
@@ -517,13 +529,19 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock], mock_drone:
     assert len(controller_plugin.controllers) == 2
     assert controller_plugin.controllers[5].input_mapping.name == "PS4 Controller"
 
+    # Identify both controllers, check rumbles
+    await controller_plugin.identify()
+    await asyncio.sleep(0.2)
+    assert len(mock_joystick1.rumbles) == 5
+    assert len(mock_joystick2.rumbles) == 2
+
     # Try to reassign drone being controlled to other controller
-    assert controller_plugin.controllers[31].in_control and controller_plugin.controllers[31].drone == "mock"
-    await controller_plugin.assign_drone("mock", 5)
-    assert controller_plugin.controllers[31].drone == "mock" and controller_plugin.controllers[5].drone is None
+    assert controller_plugin.controllers[31].in_control and controller_plugin.controllers[31].drone == mock_drone.name
+    await controller_plugin.assign_drone(mock_drone.name, 5)
+    assert controller_plugin.controllers[31].drone == mock_drone.name and controller_plugin.controllers[5].drone is None
     # Try to assign controller that does not exist
-    await controller_plugin.assign_drone("mock", 7)
-    assert controller_plugin.controllers[31].drone == "mock" and controller_plugin.controllers[5].drone is None
+    await controller_plugin.assign_drone(mock_drone.name, 7)
+    assert controller_plugin.controllers[31].drone == mock_drone.name and controller_plugin.controllers[5].drone is None
 
     await controller_plugin.status()
 
@@ -535,18 +553,20 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock], mock_drone:
     assert not controller_plugin.controllers[31].in_control
 
     # Try to reassign now
-    assert not controller_plugin.controllers[31].in_control and controller_plugin.controllers[31].drone == "mock"
-    await controller_plugin.assign_drone("mock", 5)
-    assert controller_plugin.controllers[31].drone is None and controller_plugin.controllers[5].drone == "mock"
+    assert not controller_plugin.controllers[31].in_control and \
+           controller_plugin.controllers[31].drone == mock_drone.name
+    await controller_plugin.assign_drone(mock_drone.name, 5)
+    assert controller_plugin.controllers[31].drone is None and \
+           controller_plugin.controllers[5].drone == mock_drone.name
 
     # Unassign the drone
-    await controller_plugin.unassign_drone("mock")
+    await controller_plugin.unassign_drone(mock_drone.name)
     assert controller_plugin.controllers[5].drone is None
-    await controller_plugin.unassign_drone("mock")
+    await controller_plugin.unassign_drone(mock_drone.name)
 
     # Reassign it
-    await controller_plugin.assign_drone("mock", 5)
-    assert controller_plugin.controllers[5].drone == "mock"
+    await controller_plugin.assign_drone(mock_drone.name, 5)
+    assert controller_plugin.controllers[5].drone == mock_drone.name
 
     # "Unplug" the test controllers
     mock_pygame.joystick.get_count.return_value = 0
@@ -556,3 +576,107 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock], mock_drone:
     assert len(controller_plugin.controllers) == 0
 
     assert mock_joystick1.quit_called and mock_joystick2.quit_called
+
+
+async def test_multiple_controllers(dm_with_controller: tuple[DroneManager, Mock],
+                                    mock_drone_getter: Callable[[int], Mock],
+                                    ps4_mapping: InputMapping):
+    """Testing multiple drones with multiple controllers.
+
+    Args:
+        dm_with_controller: A DroneManager instance with the controller plugin already loaded.
+        mock_drone_getter: Function to create mock drone objects.
+        ps4_mapping: A fixed InputMapping.
+    """
+    mock_drone1 = mock_drone_getter(1)
+    mock_drone2 = mock_drone_getter(2)
+    mock_drone1.fence = None
+    mock_drone2.fence = None
+    manager, mock_pygame = dm_with_controller
+    controller_plugin = getattr(manager, "controllers")
+
+    test_event_queue = Queue()
+    mock_pygame.event.get.side_effect = MockEventQueue(test_event_queue).get
+
+    mock_pygame.init.assert_called_once()
+    mock_pygame.joystick.init.assert_called_once()
+
+    mock_joystick1 = FakeJoystick(instance_id=31, name="PS4 Controller")
+    mock_joystick2 = FakeJoystick(instance_id=5, name="PS4 Controller")
+    mock_joystick2.axes = [0.0, -0.64, 0.91, 0.0, 0.0, 0.0]
+
+    def joystick_return_function(dev_id: int) -> FakeJoystick:
+        """Dummy function returning fake joystick objects for given "device" IDs.
+
+        Args:
+            dev_id: The fake device ID.
+
+        Returns:
+            One of two fixed fake joystick objects.
+        """
+        if dev_id == 0:
+            return mock_joystick1
+        else:
+            return mock_joystick2
+
+    # Add first joystick
+    mock_pygame.joystick.Joystick.side_effect = joystick_return_function
+    mock_pygame.joystick.get_count.return_value = 1
+    await asyncio.sleep(0.3)
+    assert len(mock_joystick1.rumbles) == 1
+    assert len(controller_plugin.controllers) == 1
+    assert controller_plugin.controllers[31].id == 31
+    assert controller_plugin.controllers[31].input_mapping.name == "PS4 Controller"
+
+    # Add firsts drone, check auto_assign
+    mock_drone1.flightmode = FlightMode.HOLD
+    manager.drones[mock_drone1.name] = mock_drone1
+    await asyncio.sleep(0.1)
+    # Check that the drone and controller were assigned
+    assert len(controller_plugin.drones) == 1
+    assert controller_plugin.controllers[31].drone == mock_drone1.name
+
+    # Add second drone and joystick, assign them
+    mock_drone2.flightmode = FlightMode.HOLD
+    manager.drones[mock_drone2.name] = mock_drone2
+    mock_pygame.joystick.get_count.return_value = 2
+    await asyncio.sleep(0.3)
+    assert len(mock_joystick2.rumbles) == 1
+    assert len(controller_plugin.controllers) == 2
+    assert controller_plugin.controllers[5].input_mapping.name == "PS4 Controller"
+
+    await controller_plugin.assign_drone(mock_drone2.name, 5)
+    assert controller_plugin.controllers[5].drone == mock_drone2.name
+    await asyncio.sleep(0.1)
+
+    # Status
+    await controller_plugin.status()
+
+    # Check that stick inputs are being forwarded
+    mock_drone1.set_manual_control_input.assert_called()
+    mock_drone2.set_manual_control_input.assert_called()
+
+    # Press and release control button for drone 1, check that we took control
+    test_event_queue.put(MockEvent(mock_pygame.JOYBUTTONDOWN, 5, 31))
+    await asyncio.sleep(2.5)
+    test_event_queue.put(MockEvent(mock_pygame.JOYBUTTONUP, 5, 31))
+    await asyncio.sleep(0.1)
+    assert controller_plugin.controllers[31].in_control
+    assert not controller_plugin.controllers[5].in_control
+    assert mock_drone1.flightmode is FlightMode.POSCTL
+
+    # Press and release control button for drone 2, check that we took control
+    test_event_queue.put(MockEvent(mock_pygame.JOYBUTTONDOWN, 5, 5))
+    await asyncio.sleep(2.5)
+    test_event_queue.put(MockEvent(mock_pygame.JOYBUTTONUP, 5, 5))
+    await asyncio.sleep(0.1)
+    assert controller_plugin.controllers[5].in_control
+    assert mock_drone2.flightmode is FlightMode.POSCTL
+
+    # Disconnect both drones
+    await manager.disconnect(mock_drone1.name)
+    await manager.disconnect(mock_drone2.name)
+    assert not controller_plugin.controllers[31].in_control
+    assert controller_plugin.controllers[31].drone is None
+    assert not controller_plugin.controllers[5].in_control
+    assert controller_plugin.controllers[5].drone is None
