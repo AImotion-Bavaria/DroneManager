@@ -19,7 +19,7 @@ from typing import Callable
 
 import dronemanager.core
 from dronemanager.plugin import Plugin, MetaPlugin
-from dronemanager.utils import SRC_DIR, DM_INSTALL_DIR
+from dronemanager.utils import SRC_DIR, DOC_DIR
 
 
 class Sensor(Plugin, abc.ABC):
@@ -171,7 +171,7 @@ class SensorPlugin(MetaPlugin):
 
     :meta hide-value:"""
 
-    USER_DIR: pathlib.Path = DM_INSTALL_DIR.joinpath("sensors")
+    USER_DIR: pathlib.Path = DOC_DIR.joinpath("sensors")
     """Directory in the DroneManager install directory where the sub-plugins should be located.
 
     :meta hide-value:"""

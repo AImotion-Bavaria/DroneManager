@@ -5,12 +5,12 @@ Executes the dummy script.
 import os
 
 from dronemanager.core import DroneManager
-from dronemanager.plugins.scripts import _script_function, SCRIPT_DIR
+from dronemanager.plugins.scripts import _script_function, SRC_SCRIPT_PATH
 
 
 def test_script_function():
     """Test specifically the script function."""
-    path = os.path.join(SCRIPT_DIR.as_posix(), "dummy_script.py")
+    path = SRC_SCRIPT_PATH.joinpath("dummy_script.py").as_posix()
     res = _script_function(path, ["--success"])
     assert res.returncode == 0
     assert res.stdout == "Success!\n"

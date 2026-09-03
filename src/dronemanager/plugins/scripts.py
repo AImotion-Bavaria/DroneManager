@@ -6,16 +6,25 @@ Sometimes useful for testing, as output and control are bundled in the interface
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
 import logging
-import os
 import pathlib
 import subprocess
 from subprocess import CompletedProcess, CalledProcessError
 
 import dronemanager.core
-from dronemanager.plugin import Plugin
+from dronemanager.plugin import Plugin, DOC_DIR, SRC_DIR
 
 
-SCRIPT_DIR = pathlib.Path(__file__).parent.parent.joinpath("scripts")
+DM_SCRIPT_PATH: pathlib.Path = DOC_DIR.joinpath("scripts")
+"""Script directory in the user documents directory.
+
+:meta hide-value:"""
+DM_SCRIPT_PATH.mkdir(parents=True, exist_ok=True)
+
+
+SRC_SCRIPT_PATH: pathlib.Path = SRC_DIR.joinpath("scripts")
+"""Script directory in the installation directory.
+
+:meta hide-value:"""
 
 
 class ScriptsPlugin(Plugin):
@@ -66,12 +75,20 @@ class ScriptsPlugin(Plugin):
         Returns:
             The process result or None if there was an error.
         """
-        self.logger.info(f"Executing Script {script_name}")
-        script_path = SCRIPT_DIR.joinpath(script_name).as_posix()
-        # Ensure script exists
-        if not os.path.isfile(script_path):
-            self.logger.warning(f"Script {script_name} not found in ./scripts")
+        script_files = [path.name for path in DM_SCRIPT_PATH.iterdir() if path.is_file()]
+        script_files.extend([path.name for path in SRC_SCRIPT_PATH.iterdir() if path.is_file()])
+
+        if DM_SCRIPT_PATH.joinpath(script_name).is_file():
+            full_path = DM_SCRIPT_PATH.joinpath(script_name).as_posix()
+        elif SRC_SCRIPT_PATH.joinpath(script_name).is_file():
+            full_path = SRC_SCRIPT_PATH.joinpath(script_name).as_posix()
+        else:
+            self.logger.warning(f"No script {script_name} found! Scripts must be located in either "
+                                f"{DM_SCRIPT_PATH.as_posix()} or {SRC_SCRIPT_PATH.as_posix()}")
             return None
+
+        self.logger.info(f"Executing Script {script_name}")
+        script_path = full_path
         try:
             # Execute the script
             with ProcessPoolExecutor(max_workers=2) as executor:

@@ -51,7 +51,7 @@ from typing import Any
 
 import dronemanager.core
 from dronemanager.plugin import Plugin, MetaPlugin
-from dronemanager.utils import DM_INSTALL_DIR, SRC_DIR
+from dronemanager.utils import DOC_DIR, SRC_DIR
 
 
 class Mission(Plugin, abc.ABC):
@@ -264,7 +264,7 @@ class MissionPlugin(MetaPlugin):
 
     :meta hide-value:"""
 
-    USER_DIR: pathlib.Path = DM_INSTALL_DIR.joinpath("missions")
+    USER_DIR: pathlib.Path = DOC_DIR.joinpath("missions")
     """Directory in the DroneManager install directory where the sub-plugins should be located.
 
     :meta hide-value:"""

@@ -30,8 +30,8 @@ EARTH_RADIUS = 6371000
 
 NAME = "DroneManager"
 
-DM_INSTALL_DIR = user_documents_path().joinpath(NAME)
-"""The directory where DroneManager directories and files will be installed.
+DOC_DIR = user_documents_path().joinpath(NAME)
+"""The directory where DroneManager directories for drop-in files will be installed.
 
 Defaults to the user "documents" folder.
 
@@ -44,14 +44,14 @@ SRC_DIR = pathlib.Path(__file__).parent
 :meta hide-value:
 """
 
-LOG_DIR = DM_INSTALL_DIR.joinpath("Logs")
+LOG_DIR = DOC_DIR.joinpath("Logs")
 """ The directory where all the log files are saved.
 
 :meta hide-value:
 """
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-CACHE_DIR = DM_INSTALL_DIR.joinpath(".cache")
+CACHE_DIR = DOC_DIR.joinpath(".cache")
 """ The directory for any information that might be worth caching.
 
 Currently only used for camera definition information.
@@ -60,7 +60,7 @@ Currently only used for camera definition information.
 """
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-_CONFIG_FILE = DM_INSTALL_DIR.joinpath("config.json")
+_CONFIG_FILE = DOC_DIR.joinpath("config.json")
 """ Location of the configuration file.
 
 :meta hide-value:

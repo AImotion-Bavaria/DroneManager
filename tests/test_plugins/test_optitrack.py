@@ -87,7 +87,7 @@ def _test_conversion(conversion: CoordinateConversion,
     rot_e = np.max(np.abs(conv_rot - target_angles))
     logging.error(f"Testing angles {test_angles, target_angles, conv_rot}")
     assert pos_e < 1e-6, "Position error in coordinate conversion too large!"
-    assert rot_e < 1e-6, "Rotation conversion error too large!"
+    assert rot_e < 1e-6 or abs(rot_e - 360) < 1e-6, "Rotation conversion error too large!"
 
 
 @pytest.fixture

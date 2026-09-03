@@ -24,7 +24,7 @@ from dronemanager.plugins.controllers import ActionInputType
 from dronemanager.utils import CACHE_DIR, coroutine_awaiter
 
 
-CAPTURE_DIR = os.path.join(CACHE_DIR, "mission-data", "engel_data_captures")
+CAPTURE_DIR = CACHE_DIR.joinpath("mission-data", "engel_data_captures")
 os.makedirs(CAPTURE_DIR, exist_ok=True)
 
 

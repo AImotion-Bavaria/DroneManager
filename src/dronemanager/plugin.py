@@ -14,7 +14,7 @@ import sys
 from typing import Callable, Coroutine
 
 import dronemanager.core
-from dronemanager.utils import DM_INSTALL_DIR, SRC_DIR, cancel_running_tasks
+from dronemanager.utils import DOC_DIR, SRC_DIR, cancel_running_tasks
 
 
 # TODO: Figure out scheduling
@@ -292,7 +292,7 @@ class PluginLoader(MetaPlugin):
     EXAMPLE_DIR: pathlib.Path = SRC_DIR.joinpath("plugins")
     """Directory in the source tree with shipped components."""
 
-    USER_DIR: pathlib.Path = DM_INSTALL_DIR.joinpath("plugins")
+    USER_DIR: pathlib.Path = DOC_DIR.joinpath("plugins")
     """Directory in the DroneManager install directory where new sub-plugins should be located."""
 
     VALID_CLASS_SUFFIX: str = "Plugin"
