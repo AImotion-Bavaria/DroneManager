@@ -2,8 +2,6 @@
 
 Executes the dummy script.
 """
-import os
-
 from dronemanager.core import DroneManager
 from dronemanager.plugins.scripts import _script_function, SRC_SCRIPT_PATH
 
