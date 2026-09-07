@@ -26,6 +26,20 @@ POSE. The daemon stamps each capture with FC pose and labels it
 0.0092 deg and no flight controller is close. These captures are a registration
 SEED, not an answer. The payload also hangs 25 cm below the FC — see
 `squarecapture_plan.PAYLOAD_OFFSET_FC_M`, which the consumer must apply.
+(Measured on the airframe 2026-09-04: the lidar origin is 28 cm below the FC and
+the main GPS antenna 15 cm ahead of and 8 cm above it. `Scripts/flight_poses.py`
+carries the full chain.)
+
+⚠ SCANS: CONSIDER `--scans 1` IN FLIGHT. The default 10 averages ten sweeps over
+0.9 s to cut range noise, which is right on a tripod and was validated there at
+4.6 mm of per-beam spread. Measured on `flight03`, in the air, the same
+statistic is 114 mm median (49-251) — 25x the bench — because the aircraft
+drifts 0.125 m median across that window (correlation 0.60) and yaws more than
+1 deg inside it on 11 of 32 captures. The sweeps being averaged are not taken
+from one place. A single sweep carries roughly 15 mm of range noise, so in
+flight one sweep is the better trade until deskewing exists. The default is left
+at 10 because changing what a sortie captures is an operator decision, not a
+refactor.
 
 SAFETY. The RC transmitter is the real abort: a mode switch takes the drone out
 of offboard immediately and nothing here can override that. If this mission's
@@ -37,6 +51,8 @@ itself to be safe.
 
 import asyncio
 import enum
+import json
+import math
 import os
 import sys
 import time
@@ -76,13 +92,38 @@ DEFAULT_HOST = "192.168.1.55"
 DEFAULT_USER = "dronetrekkers"
 DEFAULT_PORT = 5757
 
+# Where the mission keeps its OWN files on the ground station: the marks the
+# operator records with the drone, and one JSON per sortie with everything the
+# daemon never sees (the target, the plan, the commanded poses). This is the
+# directory DroneManager itself creates, so it survives re-copying the mission
+# files and reinstalling the package. ⚠ A OneDrive-redirected Documents folder
+# is the one way these can "disappear" — every save logs its absolute path.
+USER_DIR = os.path.join(os.path.expanduser("~"), "Documents", "DroneManager")
+MARKS_FILE = "sq_marks.json"
+SESSIONS_SUBDIR = "sq_sessions"
+# A mark stores BOTH the GNSS position and the EKF-local one. The offset is
+# always computed from GNSS (frame-independent across a reboot); the local
+# delta is a cross-check, and above this disagreement the operator is told the
+# EKF origin moved between marking and now.
+MARK_MAX_NED_DISAGREE_M = 1.0
+
+# The sortie the pattern study chose (eval/Flight/pattern-study.md): an aimed
+# orbit at radius == altitude — the fixed 45 deg mount centres the target only
+# then — 8 stations, a 15 deg fan (17.5 is the wrap-safe ceiling on an
+# 8-ring), one scan per capture. Baked into ONE command so the field does not
+# depend on ten flags being typed right; flight02 was lost to a default nobody
+# typed.
+ORBIT_PRESET = dict(pattern="orbit", anchor="centre", aim="yes",
+                    radius=7.0, altitude=7.0, stations=8, fan=15.0,
+                    headings=8, side=10.0, ring2_radius=12.0,
+                    ring2_altitude=12.0, ring2_stations=6)
+
 CALL_TIMEOUT = 15.0        # daemon's own shot_timeout is 3 s; this is the wire
 FLY_TIMEOUT = 120.0        # a 10 m leg at a few m/s, with generous slack
 YAW_TIMEOUT = 45.0         # 45 deg at 30 deg/s is 1.5 s
 TAKEOFF_TIMEOUT = 120.0
 LAND_TIMEOUT = 180.0
 SYNC_EVERY_S = 30.0        # the Jetson has no RTC; re-anchor its clock in flight
-MIN_BATTERY = 0.35
 
 
 class SquareStage(MissionStage):
@@ -103,8 +144,9 @@ class SquareFlightArea(FlightArea):
 
     def __init__(self, bounds):
         super().__init__()
+        self.bounds = tuple(float(b) for b in bounds)
         (self._x_min, self._x_max, self._y_min, self._y_max,
-         self._z_min, self._z_max) = (float(b) for b in bounds)
+         self._z_min, self._z_max) = self.bounds
 
     x_min = property(lambda self: self._x_min)
     x_max = property(lambda self: self._x_max)
@@ -205,15 +247,21 @@ class CaptureLink:
             return await self.call({"cmd": "sync", "gcs_utc_ns": time.time_ns()})
         return None
 
-    async def start_session(self, name, scans, exposure_ms, gate,
+    async def start_session(self, name, scans, exposure_ms, gain, gate,
                             require_pose, require_fix):
         return await self.call({
             "cmd": "start", "name": name, "scans": scans,
-            "exposure_ms": exposure_ms, "average": True, "gate": gate,
+            "exposure_ms": exposure_ms, "gain": gain,
+            "average": True, "gate": gate,
             "require_pose": require_pose, "require_fix": require_fix,
             "gcs_utc_ns": time.time_ns(),
             "gcs_utc_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, timeout=30.0)
+
+    async def meter(self, gain, target_sat=0.5):
+        """Ask the daemon to meter the exposure on the real picture."""
+        return await self.call({"cmd": "meter", "gain": gain,
+                                "target_sat": target_sat}, timeout=90.0)
 
     async def shot(self, tag):
         return await self.call({"cmd": "shot", "tag": tag})
@@ -241,11 +289,19 @@ class SquareCaptureMission(Mission):
             "dryrun": self.dryrun,
             "abort": self.abort,
             "link": self.set_link,
+            "mark": self.mark,
+            "marks": self.list_marks,
+            "unmark": self.unmark,
+            "orbit": self.orbit,
+            "orbit-plan": self.orbit_plan,
         })
         self.current_stage = SquareStage.Idle
 
         self.side_m = 10.0
         self.altitude_m = 10.0
+        # True once a TARGET-CENTRED pattern is planned; it widens the geofence
+        # from the square formula to the stations' own bounding box.
+        self._centred = False
         self.settle_s = 2.0
         self.retry_delay_s = 1.0
         self.yaw_rate = 30.0
@@ -341,16 +397,129 @@ class SquareCaptureMission(Mission):
                          "" if self._direct else user + "@", host, self._port,
                          " (direct TCP)" if self._direct else "")
 
-    async def show_plan(self, side: float = 10.0, altitude: float = 10.0):
+    @staticmethod
+    def _yes(v):
+        """CLI booleans arrive as strings: DroneManager builds the command line
+        from the type hints and only str/float/int/list[str] are allowed
+        (test_cli_command_parameters_are_all_annotated). Same idiom as
+        set_link's `direct`."""
+        return str(v).strip().lower() in ("yes", "true", "1", "on")
+
+    def _build_pattern(self, pattern, anchor, side, altitude, radius, stations,
+                       ring2_radius, ring2_altitude, ring2_stations, aim, fan,
+                       headings, target_n, target_e):
+        """-> (stations_ned | None, headings_fn | None). ValueError to refuse.
+
+        A one-to-one mirror of `unity_square_check.expected_poses`, so the
+        pattern that verified in Unity is the pattern that gets flown. Two
+        things here are easy to get wrong and both are silent:
+
+        * ANCHOR. `corner` is the original take-off-anchored square — the
+          drone stands at the south-west corner and the square grows north and
+          east. That is what flight01-03 flew, so it stays the default and its
+          plan is byte-identical to before. Every other pattern is built
+          AROUND the target and needs `anchor=centre`.
+        * THE TARGET OFFSET. `capture_plan` hands `headings_fn` a station
+          relative to the TAKE-OFF POINT, but the bearing must be to the
+          TARGET. Without subtracting the offset every station aims at the
+          spot the drone lifted off from, which on a 10 m offset is a 90 deg
+          error at the near stations and looks like a heading-convention bug.
+          You cannot take off under the truck, so the offset is the normal
+          case, not the exotic one.
+        """
+        if anchor == "corner":
+            if pattern != "square":
+                raise ValueError(
+                    "anchor=corner only describes the original take-off-"
+                    "anchored square; pattern=%s must be flown with "
+                    "anchor=centre and a target offset" % (pattern,))
+            if target_n or target_e:
+                raise ValueError("anchor=corner has no target to offset from")
+            return None, None
+        if anchor != "centre":
+            raise ValueError("anchor must be 'corner' or 'centre', got %r"
+                             % (anchor,))
+
+        if math.hypot(float(target_n), float(target_e)) < 1.0:
+            # An orbit never flies OVER its target and the return leg lands at
+            # the take-off point regardless, so this is a warning, not a
+            # refusal — it can only mean a rehearsal over empty grass.
+            self.logger.warning(
+                "The target is (essentially) the take-off point: the ring is "
+                "centred on the landing spot. Right for a rehearsal over "
+                "empty grass, wrong for anything you cannot take off under.")
+        rel = [(n + target_n, e + target_e, a) for n, e, a in
+               plan.pattern_stations(
+                   pattern, side_m=side, altitude_m=altitude, radius_m=radius,
+                   n_stations=stations, ring2_radius_m=ring2_radius,
+                   ring2_altitude_m=ring2_altitude,
+                   ring2_stations=ring2_stations)]
+
+        if not self._yes(aim):
+            if headings != len(plan.HEADINGS_8):
+                raise ValueError("headings=%d without aim=yes: the fixed sweep "
+                                 "is %d headings"
+                                 % (headings, len(plan.HEADINGS_8)))
+            return rel, None
+
+        about_target = [(n - target_n, e - target_e) for n, e, _a in rel]
+        lim = plan.max_safe_fan_deg(about_target)
+        if fan > lim:
+            raise ValueError(
+                "fan=%.1f deg exceeds the wrap-safe limit %.1f for this "
+                "pattern — a heading at +/-180 hangs is_at_heading forever. "
+                "Narrow the fan or re-phase the ring." % (fan, lim))
+
+        def headings_fn(st):
+            return plan.headings_toward((st[0] - target_n, st[1] - target_e),
+                                        headings, fan)
+        return rel, headings_fn
+
+    async def show_plan(self, side: float = 10.0, altitude: float = 10.0,
+                        pattern: str = "square", anchor: str = "corner",
+                        radius: float = 7.0, stations: int = 8,
+                        aim: str = "no", fan: float = 15.0,
+                        headings: int = 8, ring2_radius: float = 12.0,
+                        ring2_altitude: float = 12.0,
+                        ring2_stations: int = 6, target_n: float = 0.0,
+                        target_e: float = 0.0, target_mark: str = ""):
         """Print the station/heading schedule without flying it."""
         origin = self._read_origin() or (0.0, 0.0, 0.0)
-        stations = plan.capture_plan(side_m=side, altitude_m=altitude,
-                                     origin_ned=origin,
-                                     initial_yaw=self._read_yaw() or 0.0)
-        for line in plan.plan_summary(stations):
+        try:
+            target_n, target_e, tinfo = self._resolve_target(
+                target_mark, target_n, target_e)
+            stations_ned, headings_fn = self._build_pattern(
+                pattern, anchor, side, altitude, radius, stations,
+                ring2_radius, ring2_altitude, ring2_stations, aim, fan,
+                headings, target_n, target_e)
+            sts = plan.capture_plan(side_m=side, altitude_m=altitude,
+                                    origin_ned=origin,
+                                    initial_yaw=self._read_yaw() or 0.0,
+                                    stations_ned=stations_ned,
+                                    headings_fn=headings_fn)
+        except ValueError as exc:
+            self.logger.error("Cannot plan: %s", exc)
+            return
+        for line in plan.plan_summary(sts):
             self.logger.info(line)
+        if stations_ned is not None and self._yes(aim):
+            self.logger.info("aim fan %.1f deg (limit %.1f)", fan,
+                             plan.max_safe_fan_deg(
+                                 [(n - target_n, e - target_e)
+                                  for n, e, _a in stations_ned]))
+        bounds = plan.fence_bounds(origin, side, altitude,
+                                   stations=sts if stations_ned else None)
         self.logger.info("fence %s", ("N[%.1f,%.1f] E[%.1f,%.1f] D[%.1f,%.1f]"
-                                      % plan.fence_bounds(origin, side, altitude)))
+                                      % bounds))
+        if stations_ned is not None:
+            # The card: where the OBJECT is, in words checkable on a field.
+            target = (origin[0] + target_n, origin[1] + target_e, origin[2])
+            for line in plan.placement_card(
+                    origin, target, sts, bounds,
+                    target_global=tinfo.get("global"),
+                    marks=tinfo.get("marks", ()),
+                    altitude_delta_m=tinfo.get("amsl_delta")):
+                self.logger.info(line)
 
     async def preflight(self):
         """Check the drone, the capture daemon and the sensors without flying."""
@@ -359,19 +528,158 @@ class SquareCaptureMission(Mission):
         return ok
 
     async def run(self, session: str, side: float = 10.0, altitude: float = 10.0,
-                  scans: int = 10, settle: float = 2.0, exposure: float = 2.0,
-                  gate: str = "warn"):
-        """Fly the square and capture the dataset. Fully autonomous."""
-        await self._launch(session, side, altitude, scans, settle, exposure,
-                           gate, fly=True)
+                  scans: int = 10, settle: float = 2.0,
+                  exposure: float | None = None,
+                  gain: float = 64.0, gate: str = "warn",
+                  pattern: str = "square", anchor: str = "corner",
+                  radius: float = 7.0, stations: int = 8, aim: str = "no",
+                  fan: float = 15.0, headings: int = 8,
+                  ring2_radius: float = 12.0, ring2_altitude: float = 12.0,
+                  ring2_stations: int = 6, target_n: float = 0.0,
+                  target_e: float = 0.0, target_mark: str = ""):
+        """Fly the square and capture the dataset. Fully autonomous.
+
+        ⚠ gain defaults to 64 — UNITY, the lowest gain whose white point reaches
+        255 — and must not be lowered for "headroom". `flight01` flew at gain 0,
+        where a saturated pixel maxes out at 117, and returned 32 unusable flat-
+        wash frames that every clip test scored at 0.00%. Below unity you do not
+        gain headroom, you throw away two thirds of the output range.
+
+        exposure defaults to None, which METERS ON SITE just before takeoff.
+        Two sorties have already been lost to a hardcoded exposure: `flight01`
+        to a gain below unity, and `flight02` to this default sitting at 2.0 ms
+        — an indoor value — which clipped 98.5% of every frame at unity gain.
+        The daemon had the number (it recorded 94.5% saturated on capture #0)
+        and nothing acted on it. Metering removes the human step that failed
+        twice. Pass an explicit `exposure=` only to override it.
+        """
+        await self._launch(
+            session, fly=True, side=side, altitude=altitude, scans=scans,
+            settle=settle, exposure=exposure, gain=gain, gate=gate,
+            pattern=pattern, anchor=anchor, radius=radius, stations=stations,
+            ring2_radius=ring2_radius, ring2_altitude=ring2_altitude,
+            ring2_stations=ring2_stations, aim=aim, fan=fan,
+            headings=headings, target_n=target_n, target_e=target_e,
+            target_mark=target_mark)
 
     async def dryrun(self, session: str, side: float = 10.0,
                      altitude: float = 10.0, scans: int = 10,
-                     settle: float = 0.5, exposure: float = 2.0,
-                     gate: str = "off"):
+                     settle: float = 0.5, exposure: float | None = None,
+                     gain: float = 64.0, gate: str = "off",
+                     pattern: str = "square", anchor: str = "corner",
+                     radius: float = 7.0, stations: int = 8, aim: str = "no",
+                     fan: float = 15.0, headings: int = 8,
+                     ring2_radius: float = 12.0, ring2_altitude: float = 12.0,
+                     ring2_stations: int = 6, target_n: float = 0.0,
+                     target_e: float = 0.0, target_mark: str = ""):
         """Run the whole capture loop with every flight command skipped."""
-        await self._launch(session, side, altitude, scans, settle, exposure,
-                           gate, fly=False)
+        await self._launch(
+            session, fly=False, side=side, altitude=altitude, scans=scans,
+            settle=settle, exposure=exposure, gain=gain, gate=gate,
+            pattern=pattern, anchor=anchor, radius=radius, stations=stations,
+            ring2_radius=ring2_radius, ring2_altitude=ring2_altitude,
+            ring2_stations=ring2_stations, aim=aim, fan=fan,
+            headings=headings, target_n=target_n, target_e=target_e,
+            target_mark=target_mark)
+
+    async def orbit(self, session: str, target_mark: str = "",
+                    target_n: float = 0.0, target_e: float = 0.0,
+                    scans: int = 1, settle: float = 2.0,
+                    exposure: float | None = None, gain: float = 64.0,
+                    gate: str = "warn"):
+        """Fly the chosen sortie: aimed orbit r=7 alt=7, 8 stations, ONE scan.
+
+        Say where the object is with `--target_mark NAME` (recorded with
+        sq-mark by carrying the drone to it) or `--target_n/--target_e`
+        metres from the take-off point. scans defaults to 1 here, unlike
+        sq-run: the 0.9 s ten-sweep window smears 11 cm and 2.3 deg in hover.
+        """
+        await self._launch(
+            session, fly=True, scans=scans, settle=settle, exposure=exposure,
+            gain=gain, gate=gate, target_n=target_n, target_e=target_e,
+            target_mark=target_mark, **ORBIT_PRESET)
+
+    async def orbit_plan(self, target_mark: str = "", target_n: float = 0.0,
+                         target_e: float = 0.0):
+        """Print the orbit schedule and the placement card, fly nothing."""
+        await self.show_plan(target_n=target_n, target_e=target_e,
+                             target_mark=target_mark, **ORBIT_PRESET)
+
+    # ------------------------------------------------------------------ #
+    #  Marks: where the object is, measured with the drone's own receiver
+    # ------------------------------------------------------------------ #
+
+    async def mark(self, name: str):
+        """Record the drone's CURRENT position as NAME (carry it to the truck).
+
+        Metre-level is enough: a metre of target error is ~8 deg off frame
+        centre at 7 m and the 6 m truck stays in frame. One mark on the ground
+        at the truck's mid-side is within that; front and rear bumper averaged
+        (`--target_mark front,rear`) is better.
+        """
+        if not name or "/" in name or "\\" in name or ".." in name:
+            self.logger.error("Bad mark name %r.", name)
+            return
+        drone = self.drones.get(next(iter(self.drones), None))
+        if drone is None or not getattr(drone, "is_connected", False):
+            self.logger.error("Add a connected drone first: %s-add <name>",
+                              self.name)
+            return
+        fix = getattr(drone, "fix_type", None)
+        fix_v = int(getattr(fix, "value", 0) or 0)
+        if fix_v < 3:
+            self.logger.error("No 3D fix (fix_type %s) — a mark now would be "
+                              "a guess.", fix)
+            return
+        cur = self._read_global()
+        if cur is None:
+            self.logger.error("The drone reports no global position.")
+            return
+        if fix_v < 6:
+            self.logger.warning("Fix type %d is not RTK fixed: the mark is "
+                                "metre-level, which is within tolerance.", fix_v)
+        ned = self._read_origin()
+        marks = self._load_marks()
+        marks[name] = {"lat": cur[0], "lon": cur[1], "amsl": cur[2],
+                       "ned": list(ned) if ned is not None else None,
+                       "fix": fix_v,
+                       "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                       "drone": next(iter(self.drones))}
+        path = self._save_marks(marks)
+        self.logger.info("mark %s: lat %.7f lon %.7f amsl %.1f (fix %d) -> %s",
+                         name, cur[0], cur[1], cur[2], fix_v, path)
+
+    async def list_marks(self):
+        """List the marks with distance and true bearing from the drone NOW."""
+        marks = self._load_marks()
+        if not marks:
+            self.logger.info("No marks (%s).", self._marks_path())
+            return
+        cur = self._read_global()
+        if cur is None:
+            self.logger.warning("The drone reports no global position; "
+                                "showing raw coordinates only.")
+        for name, m in sorted(marks.items()):
+            if cur is not None:
+                n, e = plan.ned_from_llh(m["lat"], m["lon"], cur[0], cur[1])
+                self.logger.info("  %-12s %6.1f m at bearing %03.0f from here "
+                                 "(N%+.1f E%+.1f)  fix %s  %s", name,
+                                 math.hypot(n, e), plan.bearing_deg(n, e),
+                                 n, e, m.get("fix"), m.get("utc"))
+            else:
+                self.logger.info("  %-12s lat %.7f lon %.7f  fix %s  %s", name,
+                                 m["lat"], m["lon"], m.get("fix"), m.get("utc"))
+        self.logger.info("(%s)", self._marks_path())
+
+    async def unmark(self, name: str):
+        """Forget a mark."""
+        marks = self._load_marks()
+        if name not in marks:
+            self.logger.warning("No mark %r.", name)
+            return
+        del marks[name]
+        self._save_marks(marks)
+        self.logger.info("Forgot mark %s.", name)
 
     async def abort(self):
         """Stop the sweep and land where we are."""
@@ -399,8 +707,13 @@ class SquareCaptureMission(Mission):
     def _running(self):
         return self._flight_task is not None and not self._flight_task.done()
 
-    async def _launch(self, session, side, altitude, scans, settle, exposure,
-                      gate, fly):
+    async def _launch(self, session, *, fly, side=10.0, altitude=10.0,
+                      scans=10, settle=2.0, exposure=None, gain=64.0,
+                      gate="warn", pattern="square", anchor="corner",
+                      radius=7.0, stations=8, ring2_radius=12.0,
+                      ring2_altitude=12.0, ring2_stations=6, aim="no",
+                      fan=15.0, headings=8, target_n=0.0, target_e=0.0,
+                      target_mark=""):
         if self._running():
             self.logger.warning("Mission %s is already flying.", self.name)
             return
@@ -411,17 +724,45 @@ class SquareCaptureMission(Mission):
             self.logger.warning("Add exactly one drone first: %s-add <name>",
                                 self.name)
             return
+        # Build and trial-plan the pattern HERE, before a task exists and
+        # before the daemon is asked to open a session. An unflyable fan or a
+        # heading on the wrap is a typo, and a typo should cost a log line
+        # rather than an aborted sortie with a half-written session on disk.
+        try:
+            target_n, target_e, tinfo = self._resolve_target(
+                target_mark, target_n, target_e)
+            stations_ned, headings_fn = self._build_pattern(
+                pattern, anchor, side, altitude, radius, stations,
+                ring2_radius, ring2_altitude, ring2_stations, aim, fan,
+                headings, target_n, target_e)
+            plan.capture_plan(side_m=side, altitude_m=altitude,
+                              origin_ned=(0.0, 0.0, 0.0), initial_yaw=0.0,
+                              stations_ned=stations_ned,
+                              headings_fn=headings_fn)
+        except ValueError as exc:
+            self.logger.error("Cannot plan %s: %s", pattern, exc)
+            return
+        # Everything the daemon never sees, kept for the sortie's own record.
+        meta = dict(pattern=pattern, anchor=anchor, side=side,
+                    altitude=altitude, radius=radius, stations=stations,
+                    ring2_radius=ring2_radius, ring2_altitude=ring2_altitude,
+                    ring2_stations=ring2_stations, aim=aim, fan=fan,
+                    headings=headings, scans=scans, settle=settle,
+                    exposure=exposure, gain=gain, gate=gate,
+                    target=dict(tinfo, offset_ned=[target_n, target_e]))
         self.side_m, self.altitude_m, self.settle_s = side, altitude, settle
         self._results = []
         self._flight_task = asyncio.create_task(
             self._sortie(session, side, altitude, scans, settle, exposure,
-                         gate, fly))
+                         gain, gate, stations_ned, headings_fn, fly, meta))
         self._running_tasks.add(self._flight_task)
 
     async def _sortie(self, session, side, altitude, scans, settle, exposure,
-                      gate, fly):
+                      gain, gate, stations_ned, headings_fn, fly, meta=None):
         name = next(iter(self.drones))
         t0 = time.time()
+        origin, stations, started = None, None, {}
+        outcome = "not_started"
         try:
             self.current_stage = SquareStage.Preflight
             if not await self._preflight(require_flight=fly):
@@ -431,18 +772,55 @@ class SquareCaptureMission(Mission):
 
             origin = self._read_origin() if fly else (0.0, 0.0, 0.0)
             if origin is None:
-                self.logger.error("No local position — cannot anchor the square.")
+                self.logger.error("No local position — cannot anchor the "
+                                  "pattern.")
                 self.current_stage = SquareStage.Idle
                 return
             self._origin = origin
             stations = plan.capture_plan(
                 side_m=side, altitude_m=altitude, origin_ned=origin,
-                initial_yaw=(self._read_yaw() or 0.0) if fly else 0.0)
+                initial_yaw=(self._read_yaw() or 0.0) if fly else 0.0,
+                stations_ned=stations_ned, headings_fn=headings_fn)
+            self._centred = stations_ned is not None
             for line in plan.plan_summary(stations):
                 self.logger.info(line)
+            if self._centred and meta:
+                off = meta["target"]["offset_ned"]
+                t = (origin[0] + off[0], origin[1] + off[1], origin[2])
+                for line in plan.placement_card(origin, t, stations,
+                                                with_map=False)[:2]:
+                    self.logger.info(line)
+
+            exposure_ms = exposure
+            if exposure_ms is None:
+                self.logger.info("Metering exposure on site (gain %.0f)...", gain)
+                m = await self._link.meter(gain)
+                if not m.get("ok"):
+                    self.logger.error("Metering failed: %s — pass exposure= to "
+                                      "override.", m.get("reason"))
+                    self.current_stage = SquareStage.Idle
+                    return
+                exposure_ms = m["exposure_ms"]
+                self.logger.info("Metered %.2f ms at gain %.0f: %.2f%% clipped "
+                                 "against white point %s",
+                                 exposure_ms, m.get("gain", gain),
+                                 m.get("saturated_pct", -1), m.get("white_point"))
+                if m.get("hint"):
+                    self.logger.warning("Metering hint: %s", m["hint"])
+                # A metered result pinned against a rail is not an exposure, it
+                # is a report that the scene is outside what this gain can hold.
+                # Flying on it burns the whole sortie, as flight01 and flight02
+                # both did.
+                if m.get("at_floor") and m.get("saturated_pct", 0) > 5.0:
+                    self.logger.error(
+                        "Still %.1f%% clipped at the shortest exposure the "
+                        "sensor has. Lower the gain and re-run; not flying.",
+                        m.get("saturated_pct"))
+                    self.current_stage = SquareStage.Idle
+                    return
 
             started = await self._link.start_session(
-                session, scans, exposure, gate,
+                session, scans, exposure_ms, gain, gate,
                 require_pose=True, require_fix=bool(fly))
             if not started.get("ok"):
                 self.logger.error("Capture daemon refused the session: %s %s",
@@ -453,17 +831,20 @@ class SquareCaptureMission(Mission):
                              started.get("dir"))
 
             if fly:
-                await self._takeoff(name, origin, side, altitude)
+                await self._takeoff(name, origin, side, altitude, stations)
             await self._sweep(name, stations, fly)
             if fly:
-                await self._return_and_land(name, stations[0])
+                await self._return_and_land(name, origin, stations[0])
 
             self.current_stage = SquareStage.Done
+            outcome = "done"
         except asyncio.CancelledError:
+            outcome = "cancelled"
             self.logger.warning("Sortie cancelled — the drone is holding its "
                                 "last setpoint; %s-abort lands it.", self.name)
             raise
         except Exception as exc:                                   # noqa: BLE001
+            outcome = "failed"
             self.logger.error("Sortie failed: %r", exc)
             self.logger.debug("traceback", exc_info=True)
             self.current_stage = SquareStage.Aborted
@@ -480,10 +861,22 @@ class SquareCaptureMission(Mission):
                                         r.get("reason"), r.get("detail") or "")
             self.additional_info = {"session": session, "captured": ok,
                                     "planned": len(self._results)}
+            # The sortie's own record, written ground-side because the
+            # daemon's `start` whitelists its keys and would drop all of this.
+            # A disk error here must never mask the landing path above.
+            try:
+                self._write_mission_json(session, meta, origin, stations,
+                                         fly, started, outcome)
+            except Exception as exc:                            # noqa: BLE001
+                self.logger.error("mission.json not written: %r", exc)
 
-    async def _takeoff(self, name, origin, side, altitude):
+    async def _takeoff(self, name, origin, side, altitude, stations=None):
         self.current_stage = SquareStage.Takeoff
-        bounds = plan.fence_bounds(origin, side, altitude)
+        # A target-centred pattern is NOT bounded by the square formula — an
+        # orbit around a target 10 m out puts half its ring outside that box,
+        # and those waypoints would be rejected in the air.
+        bounds = plan.fence_bounds(origin, side, altitude,
+                                   stations=stations if self._centred else None)
         self.flight_area = SquareFlightArea(bounds)
         # dm.set_fence takes a constructed instance. Drone.set_fence does NOT —
         # it passes the logger as the first positional, which lands in
@@ -515,14 +908,14 @@ class SquareCaptureMission(Mission):
         for station in stations:
             self.current_stage = SquareStage.Transit
             if fly:
-                self.logger.info("-> corner %d  N%+.2f E%+.2f D%+.2f  yaw %+.1f",
+                self.logger.info("-> station %d  N%+.2f E%+.2f D%+.2f  yaw %+.1f",
                                  station.corner, *station.ned, station.arrival_yaw)
                 if not self._ok(await asyncio.wait_for(
                         self.dm.fly_to(name, local=list(station.ned),
                                        yaw=station.arrival_yaw,
                                        tol=self.position_tolerance,
                                        schedule=False), FLY_TIMEOUT)):
-                    raise RuntimeError("fly_to corner %d failed" % station.corner)
+                    raise RuntimeError("fly_to station %d failed" % station.corner)
 
             self.current_stage = SquareStage.Sweep
             for cap in station.captures:
@@ -602,11 +995,21 @@ class SquareCaptureMission(Mission):
             else:
                 self.logger.error("  %s LOST: %s", cap.tag, reply.get("reason"))
 
-    async def _return_and_land(self, name, first):
+    async def _return_and_land(self, name, origin, first):
+        """Fly back over the TAKE-OFF POINT at station 0's altitude, then land.
+
+        For the take-off-anchored square that IS station 0, which is what this
+        did before. For a target-centred pattern station 0 sits on the ring,
+        metres from the landing spot and possibly over the object — the
+        take-off point is the only place the aircraft is known to be able to
+        come down.
+        """
         self.current_stage = SquareStage.Return
-        self.logger.info("Returning to corner 0.")
+        back = (float(origin[0]), float(origin[1]), float(first.ned[2]))
+        self.logger.info("Returning to the take-off point at %.1f m.",
+                         -back[2] + float(origin[2]))
         await asyncio.wait_for(
-            self.dm.fly_to(name, local=list(first.ned), yaw=first.arrival_yaw,
+            self.dm.fly_to(name, local=list(back), yaw=first.arrival_yaw,
                            tol=self.position_tolerance, schedule=False),
             FLY_TIMEOUT)
         self.current_stage = SquareStage.Landing
@@ -663,14 +1066,26 @@ class SquareCaptureMission(Mission):
                     "— reboot the FC with it connected; a detected receiver "
                     "with no satellites still reports present=True.")
                 ok = False
+            # ⚠ NO BATTERY GATE. Removed 2026-08-31 on the operator's
+            # instruction, because on this airframe it could only ever produce
+            # FALSE failures: BAT1_SOURCE=2 (ESCs) with DSHOT_TEL_CFG=0 means
+            # `battery_status` is never published, so `remaining` is always
+            # MAVSDK's -1.0 "unknown" sentinel — which the old check compared
+            # against 35% and refused on, reporting a flat pack when the real
+            # one was at 97%.
+            #
+            # The value is still logged, because it is the only battery signal
+            # the mission has. THE CONSEQUENCE IS REAL: nothing in software will
+            # stop this sortie on a low pack, and PX4 has no low-battery
+            # failsafe either without telemetry. Watch the pack yourself.
+            # Restore a gate here once DSHOT_TEL_CFG points at the ESC telemetry
+            # UART and `remaining` reports something other than -1.0.
             batts = getattr(drone, "batteries", None) or {}
             for bid, b in batts.items():
                 rem = getattr(b, "remaining", None)
-                self.logger.info("Battery %s: %s", bid, rem)
-                if rem is not None and rem < MIN_BATTERY:
-                    self.logger.error("Battery %s below %.0f%%.", bid,
-                                      MIN_BATTERY * 100)
-                    ok = False
+                self.logger.info("Battery %s: %s%s", bid, rem,
+                                 "  (no telemetry — not checked)"
+                                 if rem is None or rem < 0 else "  (not checked)")
 
         if self._link is None:
             self._link = CaptureLink(self.logger, self._host, self._user,
@@ -737,6 +1152,154 @@ class SquareCaptureMission(Mission):
         except (TypeError, ValueError, IndexError):
             return None
         return None if yaw != yaw else yaw
+
+    def _read_global(self):
+        """(lat, lon, amsl) or None.
+
+        ⚠ A drone without a fix reports ZEROS, not NaN: DroneManager's
+        `_position_g` starts as np.zeros and only telemetry.position() fills
+        it. Null Island is not a position.
+        """
+        drone = self.drones.get(next(iter(self.drones), None))
+        if drone is None:
+            return None
+        try:
+            g = [float(v) for v in getattr(drone, "position_global")[:3]]
+        except (TypeError, ValueError, IndexError, AttributeError):
+            return None
+        if any(v != v for v in g) or (g[0] == 0.0 and g[1] == 0.0):
+            return None
+        return tuple(g)
+
+    def _marks_path(self):
+        return os.path.abspath(os.path.join(USER_DIR, MARKS_FILE))
+
+    def _mission_json_path(self, session):
+        d = os.path.join(USER_DIR, SESSIONS_SUBDIR)
+        path = os.path.join(d, session + ".mission.json")
+        if os.path.exists(path):               # a re-fly keeps the first record
+            path = os.path.join(d, "%s.%s.mission.json"
+                                % (session, time.strftime("%Y%m%dT%H%M%SZ",
+                                                          time.gmtime())))
+        return os.path.abspath(path)
+
+    @staticmethod
+    def _write_json(path, obj):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(obj, f, indent=1)
+        os.replace(tmp, path)                  # atomic, Windows included
+        return path
+
+    def _load_marks(self):
+        path = self._marks_path()
+        if not os.path.isfile(path):
+            return {}
+        try:
+            with open(path) as f:
+                marks = json.load(f)
+            return marks if isinstance(marks, dict) else {}
+        except (OSError, ValueError) as exc:
+            self.logger.error("Cannot read %s: %r", path, exc)
+            return {}
+
+    def _save_marks(self, marks):
+        return self._write_json(self._marks_path(), marks)
+
+    def _resolve_target(self, target_mark, target_n, target_e):
+        """-> (target_n, target_e, info). ValueError to refuse.
+
+        The offset is computed from the GNSS positions of the mark and of the
+        drone NOW, so it survives a reboot between marking and flying (the
+        EKF-local frame does not — `LOCAL_POSITION_NED` resets). Same
+        receiver, minutes apart: the common-mode GNSS error cancels, which is
+        why this is better than either position's absolute accuracy, and why
+        "not RTK fixed" is a warning at mark time rather than a gate here.
+        """
+        names = [s.strip() for s in str(target_mark or "").split(",")
+                 if s.strip()]
+        if not names:
+            return float(target_n), float(target_e), {"source": "offset",
+                                                      "marks": []}
+        if target_n or target_e:
+            raise ValueError("--target_mark and --target_n/--target_e were "
+                             "both given; use one")
+        marks = self._load_marks()
+        missing = [n for n in names if n not in marks]
+        if missing:
+            raise ValueError("unknown mark(s) %s — %s-marks lists them"
+                             % (", ".join(missing), self.name))
+        cur = self._read_global()
+        if cur is None:
+            raise ValueError("the drone reports no global position, so a "
+                             "mark cannot be resolved into an offset")
+        offs = [plan.ned_from_llh(marks[n]["lat"], marks[n]["lon"],
+                                  cur[0], cur[1]) for n in names]
+        tn = sum(o[0] for o in offs) / len(offs)
+        te = sum(o[1] for o in offs) / len(offs)
+
+        ned_now = self._read_origin()
+        for n, (on, oe) in zip(names, offs):
+            mned = marks[n].get("ned")
+            if ned_now is None or mned is None:
+                continue
+            dn, de = mned[0] - ned_now[0], mned[1] - ned_now[1]
+            gap = math.hypot(dn - on, de - oe)
+            if gap > MARK_MAX_NED_DISAGREE_M:
+                self.logger.warning(
+                    "mark %s: GNSS says N%+.1f E%+.1f but the EKF-local delta "
+                    "says N%+.1f E%+.1f (%.1f m apart) — the EKF origin moved "
+                    "since marking (reboot or reset); using GNSS.",
+                    n, on, oe, dn, de, gap)
+        if len(offs) > 1:
+            spread = max(math.hypot(o[0] - tn, o[1] - te) for o in offs)
+            self.logger.info("target = mean of %d marks, %.1f m spread",
+                             len(offs), spread)
+        return tn, te, {
+            "source": "mark", "marks": names,
+            "global": [sum(marks[n]["lat"] for n in names) / len(names),
+                       sum(marks[n]["lon"] for n in names) / len(names)],
+            "from_global": list(cur),
+            "amsl_delta": (sum(marks[n].get("amsl", cur[2]) for n in names)
+                           / len(names) - cur[2]),
+        }
+
+    def _write_mission_json(self, session, meta, origin, stations, fly,
+                            started, outcome):
+        """One JSON per sortie with what the daemon never sees.
+
+        `outcome` is done / cancelled / failed / not_started; `stage` is where
+        the sortie WAS when that happened (an abort during take-off reads
+        'Takeoff', which is the useful number — sq-abort sets Aborted only
+        after this record is written).
+        """
+        rec = {
+            "session": session, "fly": bool(fly),
+            "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "drone": next(iter(self.drones), None),
+            "outcome": outcome,
+            "stage": self.current_stage.name,
+            "params": meta or {},
+            "origin_ned": list(origin) if origin is not None else None,
+            "origin_global": (list(g) if (g := self._read_global()) else None),
+            "fence": (list(self.flight_area.bounds)
+                      if getattr(self, "flight_area", None) is not None
+                      else None),
+            "stations": [{"corner": s.corner, "ned": list(s.ned),
+                          "arrival_yaw": s.arrival_yaw,
+                          "headings": [c.heading for c in s.captures]}
+                         for s in (stations or [])],
+            "daemon": {"host": self._host, "session_dir": started.get("dir")},
+            "results": list(self._results),
+        }
+        if origin is not None and meta and meta.get("target"):
+            off = meta["target"].get("offset_ned", [0.0, 0.0])
+            rec["target_ned"] = [origin[0] + off[0], origin[1] + off[1],
+                                 origin[2]]
+        path = self._write_json(self._mission_json_path(session), rec)
+        self.logger.info("Sortie record -> %s", path)
+        return path
 
     async def _close_link(self):
         if self._link is not None:
