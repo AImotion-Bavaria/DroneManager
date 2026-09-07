@@ -21,7 +21,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Footer, Header, Log, Static, RadioSet, RadioButton, ProgressBar
 from textual.widget import Widget
 
-from dronemanager.widgets import InputWithHistory, TextualLogHandler, DroneOverview, ArgParser, ArgumentParserError, \
+from dronemanager.widgets import InputWithHistory, TextualLogHandler, DroneOverview, RTCM3Status, ArgParser, ArgumentParserError, \
     PrintHelpInsteadOfParsingError
 
 import logging
@@ -159,6 +159,7 @@ class CommandScreen(Screen):
         self._kill_counter = 0  # Require kill all to be entered twice
         self.logger = self.app.logger
         self.log_pane_handlers = {}
+        self.rtcm3_widget: RTCM3Status | None = None  # Track RTCM3 status widget
 
         # Parser stuff
         self._exit_aliases = ["quit", "close", "q"]
@@ -343,6 +344,11 @@ class CommandScreen(Screen):
     async def _load_plugin_commands(self, plugin_name, plugin):
         try:
             self.logger.debug(f"Loading CLI commands for plugin {plugin_name}")
+            
+            # Handle RTCM3 plugin UI
+            if plugin_name.lower() == "rtcm3":
+                await self._mount_rtcm3_widget(plugin)
+            
             commands = plugin.cli_commands
             for command_name in commands:
                 command = commands[command_name]
@@ -379,10 +385,40 @@ class CommandScreen(Screen):
             return e
 
     async def _unload_plugin_commands(self, plugin_name, plugin):
+        # Handle RTCM3 plugin UI
+        if plugin_name.lower() == "rtcm3":
+            await self._unmount_rtcm3_widget()
         # TODO: ALL OF IT
         # TODO: Apparently there isn't a great way to get rid of arguments in argparse, might have to delete the parser
         #  and generate a new one (which should be possible due to plugin list)
         pass
+
+    async def _mount_rtcm3_widget(self, rtcm3_plugin):
+        """Mount the RTCM3 status widget when the plugin is loaded."""
+        try:
+            status_field = self.query_one("#rtcm3_status", expect_type=Static)
+            # Plugin reloads can request another mount before the old widget is
+            # explicitly unloaded. Remove it first so stale status lines cannot
+            # remain alongside the current connection state.
+            if self.rtcm3_widget is not None:
+                await self.rtcm3_widget.remove()
+            self.rtcm3_widget = RTCM3Status(rtcm3_plugin, UPDATE_RATE, self.logger)
+            await status_field.mount(self.rtcm3_widget)
+            self.logger.debug("RTCM3 status widget mounted")
+        except Exception as e:
+            self.logger.warning(f"Failed to mount RTCM3 widget: {repr(e)}")
+            self.logger.debug(repr(e), exc_info=True)
+
+    async def _unmount_rtcm3_widget(self):
+        """Unmount the RTCM3 status widget when the plugin is unloaded."""
+        try:
+            if self.rtcm3_widget is not None:
+                await self.rtcm3_widget.remove()
+                self.rtcm3_widget = None
+                self.logger.debug("RTCM3 status widget unmounted")
+        except Exception as e:
+            self.logger.warning(f"Failed to unmount RTCM3 widget: {repr(e)}")
+            self.logger.debug(repr(e), exc_info=True)
 
     async def _add_drone_object(self, name, drone):
         output = self.query_one("#output", expect_type=Log)
@@ -599,6 +635,7 @@ class CommandScreen(Screen):
         """
         status_string = ""
         status_string += "Drone Status\n" + DroneOverview.header_string()
+        rtcm3_header = "RTCM3 Status"
 
         yield Header()
         yield Vertical(
@@ -608,6 +645,8 @@ class CommandScreen(Screen):
                     VerticalScroll(
                         Static(id="status_header", content=status_string),
                         id="status", classes="text evenvert"),
+                    Static(id="rtcm3_header", content=rtcm3_header, markup=False),
+                    Static(id="rtcm3_status", classes="text"),
                     Static(id="usage", classes="text evenvert", content="Type -h or --help for commands or check documentation.", markup=False),
                     id="sidebar",
                 )

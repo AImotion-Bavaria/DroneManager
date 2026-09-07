@@ -308,6 +308,93 @@ class DroneOverview(Static):
             await asyncio.sleep(1 / self.update_frequency)
 
 
+class RTCM3Status(Static):
+    """Display RTCM3 plugin status including connection, frame count, and forwarding targets."""
+    
+    def __init__(self, rtcm3_plugin, update_frequency, logger, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rtcm3_plugin = rtcm3_plugin
+        self.update_frequency = update_frequency
+        self.logger = logger
+        self._update_task: asyncio.Task | None = None
+
+    def on_mount(self) -> None:
+        self._update_task = asyncio.create_task(self.update_display())
+
+    def on_unmount(self) -> None:
+        """Stop refreshing once this status widget is no longer displayed."""
+        if self._update_task is not None:
+            self._update_task.cancel()
+            self._update_task = None
+
+    def _text_connection_status(self):
+        """Display RTCM3 connection status."""
+        color = "green" if self.rtcm3_plugin.is_connected else "red"
+        status_text = "CONNECTED" if self.rtcm3_plugin.is_connected else "DISCONNECTED"
+        string = f"RTCM3 Connection: {status_text:15} ({self.rtcm3_plugin.host}:{self.rtcm3_plugin.port})"
+        return Text(string, style=f"bold {color}")
+
+    def _text_frame_count(self):
+        """Display total frames parsed."""
+        string = f"Frames Parsed   : {self.rtcm3_plugin.total_frames_parsed:>10}"
+        return Text(string, style="bold")
+
+    def _text_forward_targets(self):
+        """Display drones receiving RTCM3 data."""
+        targets = ", ".join(self.rtcm3_plugin.forward_targets) if self.rtcm3_plugin.forward_targets else "None"
+        string = f"Forwarding to   : {targets}"
+        return Text(string, style="bold")
+
+    def _text_critical_messages(self):
+        """Display status of critical RTCM3 message types needed for RTK."""
+        critical_types = self.rtcm3_plugin.CRITICAL_MESSAGE_TYPES
+        received_critical = sum(1 for msg_type in critical_types 
+                               if msg_type in self.rtcm3_plugin.message_type_counters)
+        total_critical = len(critical_types)
+        
+        # Color code based on reception
+        if received_critical == 0:
+            color = "red"
+            status = "⚠️  CRITICAL - No message types"
+        elif received_critical < total_critical // 2:
+            color = "yellow"
+            status = f"⚠️  WARNING - {received_critical}/{total_critical} message types"
+        else:
+            color = "green"
+            status = f"✓ OK - {received_critical}/{total_critical} message types"
+        
+        string = f"Critical Msgs   : {status}"
+        return Text(string, style=f"bold {color}")
+
+    def _text_errors(self):
+        """Display error counters."""
+        errors = self.rtcm3_plugin.crc_errors + self.rtcm3_plugin.parse_errors
+        color = "red" if errors > 0 else "green"
+        string = f"Errors          : CRC={self.rtcm3_plugin.crc_errors} Parse={self.rtcm3_plugin.parse_errors}"
+        return Text(string, style=f"bold {color}")
+
+    async def update_display(self):
+        while True:
+            try:
+                if self.rtcm3_plugin.is_connected:
+                    # Show detailed information when connected
+                    text_output = Text.assemble(
+                        self._text_connection_status(), "\n",
+                        self._text_frame_count(), "\n",
+                        self._text_critical_messages(), "\n",
+                        self._text_forward_targets(), "\n",
+                        self._text_errors(), "\n",
+                    )
+                else:
+                    # Show only connection status when disconnected
+                    text_output = self._text_connection_status()
+                
+                self.update(text_output)
+            except Exception as e:
+                self.logger.debug(f"Exception updating RTCM3 status pane: {repr(e)}", exc_info=True)
+            await asyncio.sleep(1 / self.update_frequency)
+
+
 class TextualLogHandler(logging.Handler):
     def __init__(self, log_textual, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -24,7 +24,8 @@ dependencies = [
     "scipy",
     "requests",
     "ruckig>=0.19.4",
-    "opencv-python"]
+    "opencv-python",
+    "pyserial"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent", ]
