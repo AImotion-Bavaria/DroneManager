@@ -10,9 +10,14 @@ LiveGS.
 | `squarecapture.py` | the mission: square pattern, yaw sweep, rig capture at every stop |
 | `squarecapture_plan.py` | the geometry — pure stdlib, unit-tested, no DroneManager import |
 
-Tested by `tests/test_squarecapture_plan.py` (54) and
-`tests/test_squarecapture_mission.py` (59, DroneManager stubbed, capture daemon
+Tested by `tests/test_squarecapture_plan.py` (62) and
+`tests/test_squarecapture_mission.py` (65, DroneManager stubbed, capture daemon
 real).
+
+> **The next test flight is `dry01` — read [that section](#the-next-test-flight-dry01--compass-orbit-and-a-continuous-recording)
+> first. It is written for the rig as it is on 2026-09-17: ZED X instead of
+> the D455, a 1 m GNSS-compass baseline, no extrinsic calibration yet, and a
+> daemon that records the whole flight.**
 
 The plan it generates, for the defaults:
 
@@ -72,6 +77,123 @@ travel together.
 completion list because it lists every `.py` in the directory. They are not
 missions and loading them fails harmlessly.
 
+## The next test flight: `dry01` — compass, orbit and a continuous recording
+
+Three questions, one sortie, no truck. It flies the orbit preset around a
+cone, records EVERYTHING from 30 s before arming to after landing, and leaves
+a log that answers whether the 1 m compass baseline did what it should.
+
+What changed on the rig since flight04, and what it means here:
+
+| change | consequence for this flight |
+|---|---|
+| **ZED X** replaced the D455 | the daemon is a different program (`drone_capture.py` opens the ZED SDK, rectified LEFT view 1920x1200@15); `gain` is now the ZED's analog gain in **dB (1..7)**, `exposure` is still ms; the service runs from `~/calibvenv` |
+| **no extrinsic** for the ZED yet | every session says `T_lidar_camera_is_seed: true` and `capture_check` warns; `depth/` maps are provisional. **This flight validates geometry, sequence and the recording — NOT a reconstruction.** Calibrate first (`Scripts/Calibration/README.md`) before quoting any PSNR |
+| **1 m GNSS-compass baseline** | heading accuracy should fall from **2.0 deg to ~0.57 deg** (it scales as 9.9 mm / baseline). But `EKF2_GPS_POS_X/Y/Z` read **0/0/0** and `SENS_GPS_MASK=7` still blends both antennas, now a metre apart — set them BEFORE flying (below) |
+| **continuous recording** | `sq-orbit` now records every sweep (organised grid + per-column stamps), every frame (JPEG) and the Ouster IMU for the whole flight: `record=yes`, `prearm=30` by default. ~22 MB/s, ~15-20 GB per sortie |
+| **abort guard** | three consecutive refusals with one reason (each retried once) END the sortie and LAND — flight04's 64 x `no_fix` cannot happen again |
+
+### 0. On the workstation, before driving
+
+```bash
+# the daemon on the drone must be the ZED build (the D455 one crash-loops):
+./Scripts/drone_capture_deploy.sh                      # copies + md5
+ssh dronetrekkers@192.168.1.55 'sudo cp ~/dronecap/drone_capture.service /etc/systemd/system/drone-capture.service && sudo systemctl daemon-reload && sudo systemctl restart drone-capture'
+python Scripts/drone_capture_client.py --host 192.168.1.55 status     # camera.frames > 0, recording.active false
+# the four mission files into DroneManager's LiveGS branch (see Deploy above)
+```
+
+`sq_marks.json` on the ground station still holds a SITL-era `truck` mark
+in Zurich: `sq-unmark truck` before marking anything real.
+
+### 1. Drone: the compass, and the two parameters that are wrong
+
+1. **Tape-measure both antennas** relative to the FC (body FRD: x forward,
+   y right, z DOWN). Write them into `Scripts/flight_poses.py`
+   (`ANTENNA_TO_FC_M`, and the comment block above it) — `flight_report.py`
+   compares the flown baseline against those numbers, and still carries
+   the 0.275 m airframe.
+2. **Set the lever arm and stop blending**, on the ground, disarmed:
+   ```bash
+   ssh dronetrekkers@192.168.1.55 '~/TestMAVLink/.venv/bin/python -' < Scripts/fc_params.py read
+   # then, with the measured antenna-0 position (example values!):
+   ssh dronetrekkers@192.168.1.55 '~/TestMAVLink/.venv/bin/python - set EKF2_GPS_POS_X=0.15 EKF2_GPS_POS_Y=0.0 EKF2_GPS_POS_Z=-0.08 SENS_GPS_MASK=0 SENS_GPS_PRIME=0' < Scripts/fc_params.py
+   ```
+   `set` reads every value back and says MISMATCH if one did not take.
+   `GPS_YAW_OFFSET` stays 0 only if both antennas are still on the fore-aft
+   line; a sideways boom needs the measured angle. Reboot the FC and `read`
+   again.
+3. **Outside, with a fix**: `gps_check.py` now prints the GNSS heading and
+   its accuracy (`hdg_acc`) next to the fix. The number to write down:
+   **accuracy ~0.55-0.60 deg** means the baseline did its job; ~2 deg means
+   the receivers are not using the new geometry (check `nsh.py "gps
+   status"`: Main must show a numeric heading and ~30 Hz RTCM injection,
+   Secondary ~6 Hz from the ground base; `heading: nan` = do not fly).
+4. **Log a static segment**: leave the aircraft on the ground, RTK fixed,
+   for a few minutes with logging on (SDLOG_MODE 0 logs from arming — arm
+   without taking off, or set SDLOG_MODE 1 for boot-to-shutdown logging for
+   this test). Post-flight, `dgps_flight_analysis.py <log.ulg> --min-fix=3`
+   reports `reported_acc_deg`, the measured `baseline_m` and
+   `implied_perp_error_mm` — if the perpendicular error is still ~10 mm the
+   compass scaled; if it grew, the boom flexes or the antenna ground planes
+   are the problem.
+
+### 2. Mission: the cone orbit, recorded
+
+```
+connect kirk udp://:14561
+mission-load squarecapture --name sq
+sq-add kirk
+sq-unmark truck                  # the SITL mark
+sq-mark cone                     # drone standing at the cone
+sq-marks
+sq-orbit-plan --target_mark cone # placement card: 8 stations 7 m out / 7 m up, fence
+sq-check                         # daemon (ZED frames, LiDAR, pose link) + FC fix
+sq-orbit dry01 --target_mark cone
+sq-status
+```
+
+`sq-orbit` meters the exposure on site (`gain` 1.0 dB analog), opens the
+session, **starts the recording, holds 30 s still** (do not touch the
+aircraft — this is the gyro-bias segment), arms, flies 64 captures at one
+scan each, returns over the take-off point, lands, stops the recording,
+closes the session. `--prearm 0` skips the hold; `--record no` flies shots
+only. `sq-abort` stops the recording, then the session, then lands.
+
+If the guard fires you will see `SORTIE ABORTED: 3 consecutive captures
+refused with 'no_fix'` and the aircraft returning to land on its own;
+the record says `outcome: aborted`.
+
+### 3. Daemon: check before, check after
+
+Before: `drone_capture_client.py --host 192.168.1.55 preview` and read
+`saturated_pct` and `max_pixel` (white is 255 on the ZED); `status` should
+show `camera.serial 44864681`, `lidar.partial_dropped` ≥ 1 and
+`recording.active false`. A bench rehearsal of the recorder: `start bench
+--record`, wait 20 s, `stop`, then `capture_check.py` on the pulled session.
+
+After, on site:
+
+```bash
+python Scripts/drone_capture_client.py --host 192.168.1.55 pull dry01 --dest recordings/dry01
+cp ~/Documents/DroneManager/sq_sessions/dry01.mission.json recordings/dry01/
+python Scripts/capture_check.py recordings/dry01 --expect 64 --corners 8 --headings 8
+```
+
+`capture_check` now also grades the recording: sweep count and rate, gaps,
+**per-column timestamps non-zero** (they were identically zero on every
+flight until 2026-09-17 — an SDK property was being called as a method and
+the exception was swallowed), column stamps inside the npz, frame files and
+rate, IMU rate (~100 Hz, rad/s), recorder drops. Also pull the `.ulg` off
+the FC (QGC or the SD card) into the same directory — `fc_imu.py`,
+`flight_report.py` and `dgps_flight_analysis.py` all glob for it there.
+
+What the data is for: the recording is the real-rig counterpart of
+`recordings/unity-truck-C2`. The consumer — a real-session branch in
+`traj.load_recording` plus per-sweep prior poses from the tlog/ulg — is the
+first task once this data exists; `rtk_lo.py`, `run_kiss.py` and `traj.py`
+then run on it unchanged.
+
 ## Run — the chosen sortie: an aimed orbit around the truck
 
 The pattern study (`eval/Flight/pattern-study.md`) picked an aimed orbit at
@@ -129,7 +251,19 @@ captures, the pattern flight01-03 flew); `sq-plan` prints its schedule.
 ### Options
 
 `sq-run <session> [--side 10] [--altitude 10] [--scans 10] [--settle 2]
-[--exposure 2] [--gate warn]`
+[--exposure <ms>] [--gain 1.0] [--gate warn] [--record yes] [--prearm 30]`
+
+`--exposure` is milliseconds on the ZED X (its `EXPOSURE_TIME`); omitted, the
+sortie meters on site. `--gain` is the analog gain in dB, 1.0..7.0 on this
+sensor; 1.0 is the least noise and daylight can afford it. `--record yes`
+records the whole flight continuously (sweeps with per-column stamps,
+frames, Ouster IMU) from before arming to after landing; `--prearm` is the
+stationary hold, in seconds, between starting the recording and arming
+(30 by default; the gyro-bias walk is unmeasurable without it).
+
+The sortie **aborts and lands** after `max_consecutive_misses` (3) captures
+in a row are refused with the same reason, each already retried once —
+flight04 flew all 64 as `no_fix` before this existed.
 
 `--gate` is the daemon's motion gate: `warn` records the gyro peak and captures
 anyway, `block` refuses to capture while moving, `off` ignores it. `warn` is the

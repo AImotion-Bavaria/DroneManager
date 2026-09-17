@@ -253,7 +253,7 @@ def format_tag(corner, heading):
 
 def capture_plan(side_m=10.0, altitude_m=10.0, origin_ned=(0.0, 0.0, 0.0),
                  headings=HEADINGS_8, initial_yaw=0.0, stations_ned=None,
-                 headings_fn=None):
+                 headings_fn=None, wrap_guard=True):
     """Build the full station/heading schedule.
 
     :param side_m: square edge length, metres.
@@ -273,6 +273,13 @@ def capture_plan(side_m=10.0, altitude_m=10.0, origin_ned=(0.0, 0.0, 0.0),
     :param headings_fn: `f(station_ned_relative) -> [heading]`, for patterns
         whose headings depend on where the station is (an inward-aiming orbit).
         Default: the same `headings` at every station.
+    :param wrap_guard: refuse headings on the +/-180 discontinuity. ON by
+        default, and it must STAY on for anything that will be flown --
+        `is_at_heading` never wraps, so such a target hangs the sortie forever.
+        Turn it OFF only to DESCRIBE a pattern nothing will fly: a dense
+        simulated ring (the continuous Unity fixture aims 880 stations inward,
+        so some of them necessarily point due south) has no yaw controller to
+        hang. The mission itself always takes the default.
     :returns: list of `Station`, each with an absolute NED target, the yaw to
         arrive on, and its ordered `Capture` list.
     """
@@ -280,7 +287,7 @@ def capture_plan(side_m=10.0, altitude_m=10.0, origin_ned=(0.0, 0.0, 0.0),
         raise ValueError("side_m must be positive")
     if altitude_m <= 0:
         raise ValueError("altitude_m must be positive")
-    if headings_fn is None:
+    if headings_fn is None and wrap_guard:
         # Only a FIXED heading set can be checked up front; a computed one is
         # checked per station below, once it exists.
         bad = [h for h in headings if not is_wrap_safe(h)]
@@ -307,7 +314,7 @@ def capture_plan(side_m=10.0, altitude_m=10.0, origin_ned=(0.0, 0.0, 0.0),
         # looks fine on paper — an inward-aiming station due south of the target
         # commands ~180, which is exactly the target `is_at_heading` spins on
         # forever. Refuse here rather than in the air.
-        bad = [h for h in hs if not is_wrap_safe(h)]
+        bad = [h for h in hs if not is_wrap_safe(h)] if wrap_guard else []
         if bad:
             raise ValueError(
                 "station %d heading(s) %s sit on the +/-180 discontinuity; "

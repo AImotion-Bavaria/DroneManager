@@ -126,6 +126,11 @@ LAND_TIMEOUT = 180.0
 SYNC_EVERY_S = 30.0        # the Jetson has no RTC; re-anchor its clock in flight
 
 
+class CaptureAbort(RuntimeError):
+    """The sortie is not worth continuing: every capture is failing the same
+    way. Raised inside the sweep, caught by `_sortie`, which LANDS."""
+
+
 class SquareStage(MissionStage):
     Idle = enum.auto()
     Preflight = enum.auto()
@@ -247,24 +252,33 @@ class CaptureLink:
             return await self.call({"cmd": "sync", "gcs_utc_ns": time.time_ns()})
         return None
 
-    async def start_session(self, name, scans, exposure_ms, gain, gate,
+    async def start_session(self, name, scans, exposure_ms, gain_db, gate,
                             require_pose, require_fix):
         return await self.call({
             "cmd": "start", "name": name, "scans": scans,
-            "exposure_ms": exposure_ms, "gain": gain,
+            "exposure_ms": exposure_ms, "gain_db": gain_db,
             "average": True, "gate": gate,
             "require_pose": require_pose, "require_fix": require_fix,
             "gcs_utc_ns": time.time_ns(),
             "gcs_utc_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, timeout=30.0)
 
-    async def meter(self, gain, target_sat=0.5):
+    async def meter(self, gain_db, target_sat=0.5):
         """Ask the daemon to meter the exposure on the real picture."""
-        return await self.call({"cmd": "meter", "gain": gain,
+        return await self.call({"cmd": "meter", "gain_db": gain_db,
                                 "target_sat": target_sat}, timeout=90.0)
 
     async def shot(self, tag):
         return await self.call({"cmd": "shot", "tag": tag})
+
+    async def rec_start(self):
+        """Start the continuous recording (every sweep, frame and IMU sample)
+        into the open session. The daemon refuses without a session."""
+        return await self.call({"cmd": "rec_start"}, timeout=30.0)
+
+    async def rec_stop(self):
+        """Stop it and get the summary (sweeps, frames, imu rows, drops)."""
+        return await self.call({"cmd": "rec_stop"}, timeout=30.0)
 
     async def stop_session(self):
         return await self.call({"cmd": "stop"}, timeout=30.0)
@@ -304,6 +318,18 @@ class SquareCaptureMission(Mission):
         self._centred = False
         self.settle_s = 2.0
         self.retry_delay_s = 1.0
+        # ⚠ The guard flight04 did not have: it flew all 8 stations, retried
+        # all 64 captures and landed after 11 minutes with 64 x `no_fix` and
+        # nothing on disk — the THIRD sortie lost to "every capture fails the
+        # same way and nothing acts on it" (flight01 gain 0, flight02 98.5%
+        # saturated). Three consecutive refusals sharing one reason, each
+        # already retried once, end the sortie and land.
+        self.max_consecutive_misses = 3
+        # Seconds the aircraft sits STILL, recording, before arming. The gyro
+        # bias random walk is unmeasurable without a stationary segment
+        # (flight03 had 2 s of 213, both after landing). Tests set it to 0.
+        self.prearm_still_s = 30.0
+        self._recording = None      # what the daemon said when asked to record
         self.yaw_rate = 30.0
         self.position_tolerance = 0.3
         self.yaw_tolerance = 2.0
@@ -530,28 +556,34 @@ class SquareCaptureMission(Mission):
     async def run(self, session: str, side: float = 10.0, altitude: float = 10.0,
                   scans: int = 10, settle: float = 2.0,
                   exposure: float | None = None,
-                  gain: float = 64.0, gate: str = "warn",
+                  gain: float = 1.0, gate: str = "warn",
                   pattern: str = "square", anchor: str = "corner",
                   radius: float = 7.0, stations: int = 8, aim: str = "no",
                   fan: float = 15.0, headings: int = 8,
                   ring2_radius: float = 12.0, ring2_altitude: float = 12.0,
                   ring2_stations: int = 6, target_n: float = 0.0,
-                  target_e: float = 0.0, target_mark: str = ""):
+                  target_e: float = 0.0, target_mark: str = "",
+                  record: str = "yes", prearm: float = -1.0):
         """Fly the square and capture the dataset. Fully autonomous.
 
-        ⚠ gain defaults to 64 — UNITY, the lowest gain whose white point reaches
-        255 — and must not be lowered for "headroom". `flight01` flew at gain 0,
-        where a saturated pixel maxes out at 117, and returned 32 unusable flat-
-        wash frames that every clip test scored at 0.00%. Below unity you do not
-        gain headroom, you throw away two thirds of the output range.
+        gain is the ZED X's ANALOG gain in dB (1.0..7.0 on this AR0234;
+        1.0 = least noise, which daylight can afford). The D455-era "unity
+        gain 64" rule is gone with the sensor: on the ZED white is 255 at
+        every gain, so the clip test always sees an overexposure.
 
-        exposure defaults to None, which METERS ON SITE just before takeoff.
-        Two sorties have already been lost to a hardcoded exposure: `flight01`
-        to a gain below unity, and `flight02` to this default sitting at 2.0 ms
-        — an indoor value — which clipped 98.5% of every frame at unity gain.
-        The daemon had the number (it recorded 94.5% saturated on capture #0)
-        and nothing acted on it. Metering removes the human step that failed
-        twice. Pass an explicit `exposure=` only to override it.
+        exposure (ms) defaults to None, which METERS ON SITE just before
+        takeoff. Two sorties have already been lost to a hardcoded exposure:
+        `flight01` to a gain below unity, and `flight02` to this default
+        sitting at 2.0 ms — an indoor value — which clipped 98.5% of every
+        frame. The daemon had the number (it recorded 94.5% saturated on
+        capture #0) and nothing acted on it. Metering removes the human step
+        that failed twice. Pass an explicit `exposure=` only to override it.
+
+        record=yes records the WHOLE flight continuously (every sweep with
+        its per-column timestamps, every frame, the Ouster IMU) from before
+        arming to after landing — the real-rig counterpart of the Unity C2
+        fixture, for LIO/odometry. prearm is the stationary hold before
+        arming while recording (default 30 s; the gyro bias walk needs it).
         """
         await self._launch(
             session, fly=True, side=side, altitude=altitude, scans=scans,
@@ -560,19 +592,22 @@ class SquareCaptureMission(Mission):
             ring2_radius=ring2_radius, ring2_altitude=ring2_altitude,
             ring2_stations=ring2_stations, aim=aim, fan=fan,
             headings=headings, target_n=target_n, target_e=target_e,
-            target_mark=target_mark)
+            target_mark=target_mark, record=record, prearm=prearm)
 
     async def dryrun(self, session: str, side: float = 10.0,
                      altitude: float = 10.0, scans: int = 10,
                      settle: float = 0.5, exposure: float | None = None,
-                     gain: float = 64.0, gate: str = "off",
+                     gain: float = 1.0, gate: str = "off",
                      pattern: str = "square", anchor: str = "corner",
                      radius: float = 7.0, stations: int = 8, aim: str = "no",
                      fan: float = 15.0, headings: int = 8,
                      ring2_radius: float = 12.0, ring2_altitude: float = 12.0,
                      ring2_stations: int = 6, target_n: float = 0.0,
-                     target_e: float = 0.0, target_mark: str = ""):
-        """Run the whole capture loop with every flight command skipped."""
+                     target_e: float = 0.0, target_mark: str = "",
+                     record: str = "yes", prearm: float = 0.0):
+        """Run the whole capture loop with every flight command skipped.
+        The recording still runs (record=yes) so the bench can verify the
+        continuous files; the pre-arm hold defaults to 0 here."""
         await self._launch(
             session, fly=False, side=side, altitude=altitude, scans=scans,
             settle=settle, exposure=exposure, gain=gain, gate=gate,
@@ -580,24 +615,28 @@ class SquareCaptureMission(Mission):
             ring2_radius=ring2_radius, ring2_altitude=ring2_altitude,
             ring2_stations=ring2_stations, aim=aim, fan=fan,
             headings=headings, target_n=target_n, target_e=target_e,
-            target_mark=target_mark)
+            target_mark=target_mark, record=record, prearm=prearm)
 
     async def orbit(self, session: str, target_mark: str = "",
                     target_n: float = 0.0, target_e: float = 0.0,
                     scans: int = 1, settle: float = 2.0,
-                    exposure: float | None = None, gain: float = 64.0,
-                    gate: str = "warn"):
+                    exposure: float | None = None, gain: float = 1.0,
+                    gate: str = "warn", record: str = "yes",
+                    prearm: float = -1.0):
         """Fly the chosen sortie: aimed orbit r=7 alt=7, 8 stations, ONE scan.
 
         Say where the object is with `--target_mark NAME` (recorded with
         sq-mark by carrying the drone to it) or `--target_n/--target_e`
         metres from the take-off point. scans defaults to 1 here, unlike
         sq-run: the 0.9 s ten-sweep window smears 11 cm and 2.3 deg in hover.
+        The whole flight is recorded continuously (record=yes) with a 30 s
+        stationary hold before arming (prearm); see `run`.
         """
         await self._launch(
             session, fly=True, scans=scans, settle=settle, exposure=exposure,
             gain=gain, gate=gate, target_n=target_n, target_e=target_e,
-            target_mark=target_mark, **ORBIT_PRESET)
+            target_mark=target_mark, record=record, prearm=prearm,
+            **ORBIT_PRESET)
 
     async def orbit_plan(self, target_mark: str = "", target_n: float = 0.0,
                          target_e: float = 0.0):
@@ -693,6 +732,9 @@ class SquareCaptureMission(Mission):
                 pass
         self.current_stage = SquareStage.Aborted
         if self._link is not None:
+            if self._recording is not None:
+                r = await self._link.rec_stop()
+                self._recording["summary"] = r.get("summary")
             await self._link.stop_session()
             await self._close_link()
         if self.drones:
@@ -713,7 +755,7 @@ class SquareCaptureMission(Mission):
                       radius=7.0, stations=8, ring2_radius=12.0,
                       ring2_altitude=12.0, ring2_stations=6, aim="no",
                       fan=15.0, headings=8, target_n=0.0, target_e=0.0,
-                      target_mark=""):
+                      target_mark="", record="yes", prearm=-1.0):
         if self._running():
             self.logger.warning("Mission %s is already flying.", self.name)
             return
@@ -749,9 +791,13 @@ class SquareCaptureMission(Mission):
                     ring2_stations=ring2_stations, aim=aim, fan=fan,
                     headings=headings, scans=scans, settle=settle,
                     exposure=exposure, gain=gain, gate=gate,
+                    record=self._yes(record),
+                    prearm=(float(prearm) if float(prearm) >= 0
+                            else self.prearm_still_s),
                     target=dict(tinfo, offset_ned=[target_n, target_e]))
         self.side_m, self.altitude_m, self.settle_s = side, altitude, settle
         self._results = []
+        self._recording = None
         self._flight_task = asyncio.create_task(
             self._sortie(session, side, altitude, scans, settle, exposure,
                          gain, gate, stations_ned, headings_fn, fly, meta))
@@ -793,7 +839,7 @@ class SquareCaptureMission(Mission):
 
             exposure_ms = exposure
             if exposure_ms is None:
-                self.logger.info("Metering exposure on site (gain %.0f)...", gain)
+                self.logger.info("Metering exposure on site (analog gain %.1f dB)...", gain)
                 m = await self._link.meter(gain)
                 if not m.get("ok"):
                     self.logger.error("Metering failed: %s — pass exposure= to "
@@ -801,10 +847,9 @@ class SquareCaptureMission(Mission):
                     self.current_stage = SquareStage.Idle
                     return
                 exposure_ms = m["exposure_ms"]
-                self.logger.info("Metered %.2f ms at gain %.0f: %.2f%% clipped "
-                                 "against white point %s",
-                                 exposure_ms, m.get("gain", gain),
-                                 m.get("saturated_pct", -1), m.get("white_point"))
+                self.logger.info("Metered %.2f ms at %.1f dB: %.2f%% clipped",
+                                 exposure_ms, m.get("gain_db", gain),
+                                 m.get("saturated_pct", -1))
                 if m.get("hint"):
                     self.logger.warning("Metering hint: %s", m["hint"])
                 # A metered result pinned against a rail is not an exposure, it
@@ -830,9 +875,43 @@ class SquareCaptureMission(Mission):
             self.logger.info("Capture session %s -> %s", session,
                              started.get("dir"))
 
+            if meta and meta.get("record"):
+                r = await self._link.rec_start()
+                if not r.get("ok"):
+                    # The recording is the point of this sortie; a refused
+                    # recorder is a refused sortie, not a silent downgrade.
+                    self.logger.error("Capture daemon refused to record: %s %s "
+                                      "— not flying. Pass record=no to fly "
+                                      "shots only.", r.get("reason"),
+                                      r.get("detail") or "")
+                    self.current_stage = SquareStage.Idle
+                    return
+                self._recording = {"started": r.get("recording"),
+                                   "prearm_s": meta.get("prearm"),
+                                   "summary": None}
+                self.logger.info("Recording the whole flight -> %s",
+                                 started.get("dir"))
+                hold = float(meta.get("prearm") or 0.0)
+                if hold > 0:
+                    self.logger.info("Holding STILL for %.0f s before arming "
+                                     "(pre-arm IMU segment) — do not touch "
+                                     "the aircraft.", hold)
+                    await asyncio.sleep(hold)
+
             if fly:
                 await self._takeoff(name, origin, side, altitude, stations)
-            await self._sweep(name, stations, fly)
+            try:
+                await self._sweep(name, stations, fly)
+            except CaptureAbort as exc:
+                # Land. The old path set Aborted and left the aircraft
+                # hovering on its last setpoint for the pilot to notice.
+                self.logger.error("SORTIE ABORTED: %s — returning to land.", exc)
+                outcome = "aborted"
+                self.current_stage = SquareStage.Aborted
+                if fly:
+                    await self._return_and_land(name, origin, stations[0])
+                self.current_stage = SquareStage.Aborted
+                return
             if fly:
                 await self._return_and_land(name, origin, stations[0])
 
@@ -850,6 +929,18 @@ class SquareCaptureMission(Mission):
             self.current_stage = SquareStage.Aborted
         finally:
             if self._link is not None:
+                if self._recording is not None:
+                    r = await self._link.rec_stop()
+                    self._recording["summary"] = r.get("summary")
+                    if r.get("ok"):
+                        sm = r["summary"] or {}
+                        self.logger.info("Recording: %s sweeps, %s frames, %s "
+                                         "imu rows, %.2f GB, dropped %s/%s",
+                                         sm.get("sweeps"), sm.get("frames"),
+                                         sm.get("imu_rows"),
+                                         (sm.get("bytes") or 0) / 1e9,
+                                         sm.get("dropped_sweeps"),
+                                         sm.get("dropped_frames"))
                 await self._link.stop_session()
                 await self._close_link()
             ok = sum(1 for r in self._results if r.get("ok"))
@@ -905,6 +996,7 @@ class SquareCaptureMission(Mission):
         list.
         """
         drone = self.drones[name]
+        streak, streak_reason = 0, None
         for station in stations:
             self.current_stage = SquareStage.Transit
             if fly:
@@ -929,7 +1021,16 @@ class SquareCaptureMission(Mission):
                 # it and the LiDAR smears.
                 await asyncio.sleep(self.settle_s)
                 await self._link.sync_if_due()
-                await self._capture(cap, drone if fly else None)
+                ok, reason = await self._capture(cap, drone if fly else None)
+                if ok or reason != streak_reason:
+                    streak, streak_reason = (0 if ok else 1), (None if ok else reason)
+                else:
+                    streak += 1
+                if streak >= self.max_consecutive_misses:
+                    raise CaptureAbort(
+                        "%d consecutive captures refused with %r (each "
+                        "retried once); nothing this sortie records would "
+                        "be usable" % (streak, reason))
 
     async def _point(self, drone, name, ned, heading):
         """Aim the rig, then pin the drone there for the exposure.
@@ -974,6 +1075,7 @@ class SquareCaptureMission(Mission):
                              cap.tag, reply.get("id"), rec.get("points"),
                              rec.get("saturated_pct") or 0.0, rec.get("gyro_peak"),
                              (rec.get("pose") or {}).get("have"))
+            return True, None
         else:
             # One retry, then move on. Stranding the drone in a hover to chase a
             # single frame trades a whole sortie for 1/32nd of a dataset.
@@ -992,8 +1094,9 @@ class SquareCaptureMission(Mission):
                 self.logger.info("  %s #%s RECOVERED on retry  pts=%s pose=%s",
                                  cap.tag, reply.get("id"), rec.get("points"),
                                  (rec.get("pose") or {}).get("have"))
-            else:
-                self.logger.error("  %s LOST: %s", cap.tag, reply.get("reason"))
+                return True, None
+            self.logger.error("  %s LOST: %s", cap.tag, reply.get("reason"))
+            return False, reply.get("reason")
 
     async def _return_and_land(self, name, origin, first):
         """Fly back over the TAKE-OFF POINT at station 0's altitude, then land.
@@ -1291,6 +1394,7 @@ class SquareCaptureMission(Mission):
                           "headings": [c.heading for c in s.captures]}
                          for s in (stations or [])],
             "daemon": {"host": self._host, "session_dir": started.get("dir")},
+            "recording": self._recording,
             "results": list(self._results),
         }
         if origin is not None and meta and meta.get("target"):
