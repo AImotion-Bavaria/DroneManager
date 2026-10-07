@@ -82,7 +82,6 @@ YAW_TIMEOUT = 45.0         # 45 deg at 30 deg/s is 1.5 s
 TAKEOFF_TIMEOUT = 120.0
 LAND_TIMEOUT = 180.0
 SYNC_EVERY_S = 30.0        # the Jetson has no RTC; re-anchor its clock in flight
-MIN_BATTERY = 0.35
 
 
 class SquareStage(MissionStage):
@@ -205,15 +204,21 @@ class CaptureLink:
             return await self.call({"cmd": "sync", "gcs_utc_ns": time.time_ns()})
         return None
 
-    async def start_session(self, name, scans, exposure_ms, gate,
+    async def start_session(self, name, scans, exposure_ms, gain, gate,
                             require_pose, require_fix):
         return await self.call({
             "cmd": "start", "name": name, "scans": scans,
-            "exposure_ms": exposure_ms, "average": True, "gate": gate,
+            "exposure_ms": exposure_ms, "gain": gain,
+            "average": True, "gate": gate,
             "require_pose": require_pose, "require_fix": require_fix,
             "gcs_utc_ns": time.time_ns(),
             "gcs_utc_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, timeout=30.0)
+
+    async def meter(self, gain, target_sat=0.5):
+        """Ask the daemon to meter the exposure on the real picture."""
+        return await self.call({"cmd": "meter", "gain": gain,
+                                "target_sat": target_sat}, timeout=90.0)
 
     async def shot(self, tag):
         return await self.call({"cmd": "shot", "tag": tag})
@@ -359,19 +364,35 @@ class SquareCaptureMission(Mission):
         return ok
 
     async def run(self, session: str, side: float = 10.0, altitude: float = 10.0,
-                  scans: int = 10, settle: float = 2.0, exposure: float = 2.0,
-                  gate: str = "warn"):
-        """Fly the square and capture the dataset. Fully autonomous."""
+                  scans: int = 10, settle: float = 2.0,
+                  exposure: float | None = None,
+                  gain: float = 64.0, gate: str = "warn"):
+        """Fly the square and capture the dataset. Fully autonomous.
+
+        ⚠ gain defaults to 64 — UNITY, the lowest gain whose white point reaches
+        255 — and must not be lowered for "headroom". `flight01` flew at gain 0,
+        where a saturated pixel maxes out at 117, and returned 32 unusable flat-
+        wash frames that every clip test scored at 0.00%. Below unity you do not
+        gain headroom, you throw away two thirds of the output range.
+
+        exposure defaults to None, which METERS ON SITE just before takeoff.
+        Two sorties have already been lost to a hardcoded exposure: `flight01`
+        to a gain below unity, and `flight02` to this default sitting at 2.0 ms
+        — an indoor value — which clipped 98.5% of every frame at unity gain.
+        The daemon had the number (it recorded 94.5% saturated on capture #0)
+        and nothing acted on it. Metering removes the human step that failed
+        twice. Pass an explicit `exposure=` only to override it.
+        """
         await self._launch(session, side, altitude, scans, settle, exposure,
-                           gate, fly=True)
+                           gain, gate, fly=True)
 
     async def dryrun(self, session: str, side: float = 10.0,
                      altitude: float = 10.0, scans: int = 10,
-                     settle: float = 0.5, exposure: float = 2.0,
-                     gate: str = "off"):
+                     settle: float = 0.5, exposure: float | None = None,
+                     gain: float = 64.0, gate: str = "off"):
         """Run the whole capture loop with every flight command skipped."""
         await self._launch(session, side, altitude, scans, settle, exposure,
-                           gate, fly=False)
+                           gain, gate, fly=False)
 
     async def abort(self):
         """Stop the sweep and land where we are."""
@@ -400,7 +421,7 @@ class SquareCaptureMission(Mission):
         return self._flight_task is not None and not self._flight_task.done()
 
     async def _launch(self, session, side, altitude, scans, settle, exposure,
-                      gate, fly):
+                      gain, gate, fly):
         if self._running():
             self.logger.warning("Mission %s is already flying.", self.name)
             return
@@ -415,11 +436,11 @@ class SquareCaptureMission(Mission):
         self._results = []
         self._flight_task = asyncio.create_task(
             self._sortie(session, side, altitude, scans, settle, exposure,
-                         gate, fly))
+                         gain, gate, fly))
         self._running_tasks.add(self._flight_task)
 
     async def _sortie(self, session, side, altitude, scans, settle, exposure,
-                      gate, fly):
+                      gain, gate, fly):
         name = next(iter(self.drones))
         t0 = time.time()
         try:
@@ -441,8 +462,36 @@ class SquareCaptureMission(Mission):
             for line in plan.plan_summary(stations):
                 self.logger.info(line)
 
+            exposure_ms = exposure
+            if exposure_ms is None:
+                self.logger.info("Metering exposure on site (gain %.0f)...", gain)
+                m = await self._link.meter(gain)
+                if not m.get("ok"):
+                    self.logger.error("Metering failed: %s — pass exposure= to "
+                                      "override.", m.get("reason"))
+                    self.current_stage = SquareStage.Idle
+                    return
+                exposure_ms = m["exposure_ms"]
+                self.logger.info("Metered %.2f ms at gain %.0f: %.2f%% clipped "
+                                 "against white point %s",
+                                 exposure_ms, m.get("gain", gain),
+                                 m.get("saturated_pct", -1), m.get("white_point"))
+                if m.get("hint"):
+                    self.logger.warning("Metering hint: %s", m["hint"])
+                # A metered result pinned against a rail is not an exposure, it
+                # is a report that the scene is outside what this gain can hold.
+                # Flying on it burns the whole sortie, as flight01 and flight02
+                # both did.
+                if m.get("at_floor") and m.get("saturated_pct", 0) > 5.0:
+                    self.logger.error(
+                        "Still %.1f%% clipped at the shortest exposure the "
+                        "sensor has. Lower the gain and re-run; not flying.",
+                        m.get("saturated_pct"))
+                    self.current_stage = SquareStage.Idle
+                    return
+
             started = await self._link.start_session(
-                session, scans, exposure, gate,
+                session, scans, exposure_ms, gain, gate,
                 require_pose=True, require_fix=bool(fly))
             if not started.get("ok"):
                 self.logger.error("Capture daemon refused the session: %s %s",
@@ -663,14 +712,26 @@ class SquareCaptureMission(Mission):
                     "— reboot the FC with it connected; a detected receiver "
                     "with no satellites still reports present=True.")
                 ok = False
+            # ⚠ NO BATTERY GATE. Removed 2026-08-31 on the operator's
+            # instruction, because on this airframe it could only ever produce
+            # FALSE failures: BAT1_SOURCE=2 (ESCs) with DSHOT_TEL_CFG=0 means
+            # `battery_status` is never published, so `remaining` is always
+            # MAVSDK's -1.0 "unknown" sentinel — which the old check compared
+            # against 35% and refused on, reporting a flat pack when the real
+            # one was at 97%.
+            #
+            # The value is still logged, because it is the only battery signal
+            # the mission has. THE CONSEQUENCE IS REAL: nothing in software will
+            # stop this sortie on a low pack, and PX4 has no low-battery
+            # failsafe either without telemetry. Watch the pack yourself.
+            # Restore a gate here once DSHOT_TEL_CFG points at the ESC telemetry
+            # UART and `remaining` reports something other than -1.0.
             batts = getattr(drone, "batteries", None) or {}
             for bid, b in batts.items():
                 rem = getattr(b, "remaining", None)
-                self.logger.info("Battery %s: %s", bid, rem)
-                if rem is not None and rem < MIN_BATTERY:
-                    self.logger.error("Battery %s below %.0f%%.", bid,
-                                      MIN_BATTERY * 100)
-                    ok = False
+                self.logger.info("Battery %s: %s%s", bid, rem,
+                                 "  (no telemetry — not checked)"
+                                 if rem is None or rem < 0 else "  (not checked)")
 
         if self._link is None:
             self._link = CaptureLink(self.logger, self._host, self._user,

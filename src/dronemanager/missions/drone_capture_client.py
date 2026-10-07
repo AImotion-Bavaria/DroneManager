@@ -194,6 +194,15 @@ def main(argv=None):
     s.add_argument("name")
     s.add_argument("--scans", type=int, default=10)
     s.add_argument("--exposure-ms", type=float, default=2.0)
+    s.add_argument("--gain", type=float, default=None,
+                   help="D455 colour gain 0..128. 64 is UNITY: the lowest gain "
+                        "whose white point reaches 255. Below it a saturated "
+                        "pixel cannot exceed e.g. 117, so nothing can detect "
+                        "the overexposure. Do not lower it for 'headroom'.")
+    s.add_argument("--white-balance", type=float, default=None,
+                   help="colour temperature in K (2800..6500). Auto-WB is inert "
+                        "outdoors and casts daylight magenta; 3700 measured "
+                        "neutral on grass.")
     s.add_argument("--no-average", action="store_true")
     s.add_argument("--gate", choices=("off", "warn", "block"), default="warn")
     s.add_argument("--require-pose", action="store_true")
@@ -202,6 +211,13 @@ def main(argv=None):
     sh = sub.add_parser("shot")
     sh.add_argument("--force", action="store_true")
     sh.add_argument("--tag")
+
+    mt = sub.add_parser("meter",
+                        help="pick the longest exposure that keeps clipped "
+                             "pixels under --target-sat, judged on real frames")
+    mt.add_argument("--target-sat", type=float, default=0.5)
+    mt.add_argument("--gain", type=float, default=64.0,
+                    help="64 = unity gain; see --gain on `start`")
 
     sub.add_parser("stop")
     sub.add_parser("status")
@@ -234,12 +250,18 @@ def main(argv=None):
             req = {"cmd": "start", "name": args.name, "scans": args.scans,
                    "exposure_ms": args.exposure_ms,
                    "average": not args.no_average, "gate": args.gate,
+                   **({"gain": args.gain} if args.gain is not None else {}),
+                   **({"white_balance": args.white_balance}
+                      if args.white_balance is not None else {}),
                    "require_pose": args.require_pose,
                    "require_fix": args.require_fix,
                    # the GCS clock is the good one; the Jetson has no RTC
                    "gcs_utc_ns": time.time_ns(),
                    "gcs_utc_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
             _print(link.call(req), args.raw)
+        elif args.cmd == "meter":
+            _print(link.call({"cmd": "meter", "target_sat": args.target_sat,
+                              "gain": args.gain}), args.raw)
         elif args.cmd == "shot":
             _print(link.call({"cmd": "shot", "force": args.force,
                               "tag": args.tag}), args.raw)
