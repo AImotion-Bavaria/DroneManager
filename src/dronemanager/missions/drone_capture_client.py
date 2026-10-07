@@ -106,7 +106,8 @@ def cmd_repl(link, args):
     JPEG on demand. Keeping the keys identical means the muscle memory from the
     tripod sessions carries straight over.
     """
-    print("SPACE/enter = shot   u = force   p = preview   s = status   q = quit")
+    print("SPACE/enter = shot   u = force   p = preview   s = status   "
+          "r = rec start/stop   q = quit")
     last_sync = 0.0
     while True:
         try:
@@ -136,10 +137,24 @@ def cmd_repl(link, args):
         elif k in ("s", "status"):
             r = link.call({"cmd": "status"})
             s, p = r.get("session"), r.get("pose", {})
+            rec = r.get("recording") or {}
             print(f"  session={s and s['name']} captures={s and s['captures']} "
                   f"lidar={r['lidar']['frames']}f/{r['lidar']['age_ms']}ms "
                   f"cam={r['camera']['frames']}f pose_link={p.get('link_up')} "
-                  f"free={r['disk']['free_gb']}GB")
+                  f"free={r['disk']['free_gb']}GB rec={rec.get('active')}"
+                  + (f" ({rec.get('sweeps')} sweeps/{rec.get('frames')} frames)"
+                     if rec.get("active") else ""))
+            continue
+        elif k in ("r", "rec"):
+            st = link.call({"cmd": "status"}).get("recording") or {}
+            r = link.call({"cmd": "rec_stop" if st.get("active") else "rec_start"})
+            if r.get("ok"):
+                summ = r.get("summary") or r.get("recording") or {}
+                print(f"  recording {'STOPPED' if st.get('active') else 'STARTED'}: "
+                      f"{summ.get('sweeps')} sweeps, {summ.get('frames')} frames, "
+                      f"{summ.get('imu_rows')} imu rows")
+            else:
+                print(f"  REFUSED: {r.get('reason')} {r.get('detail') or ''}")
             continue
         else:
             print("  ?")
@@ -192,21 +207,26 @@ def main(argv=None):
 
     s = sub.add_parser("start")
     s.add_argument("name")
-    s.add_argument("--scans", type=int, default=10)
-    s.add_argument("--exposure-ms", type=float, default=2.0)
-    s.add_argument("--gain", type=float, default=None,
-                   help="D455 colour gain 0..128. 64 is UNITY: the lowest gain "
-                        "whose white point reaches 255. Below it a saturated "
-                        "pixel cannot exceed e.g. 117, so nothing can detect "
-                        "the overexposure. Do not lower it for 'headroom'.")
+    s.add_argument("--scans", type=int, default=10,
+                   help="sweeps averaged per shot; 10 on a tripod, 1 in flight")
+    s.add_argument("--exposure-ms", type=float, default=None,
+                   help="manual exposure in ms (ZED X EXPOSURE_TIME); negative "
+                        "= auto; omitted = leave the camera as it is (use "
+                        "`meter` first)")
+    s.add_argument("--gain-db", type=float, default=None,
+                   help="analog gain in dB, 1.0..7.0 on this AR0234; 1.0 is "
+                        "the least noise. Only meaningful with a manual "
+                        "exposure.")
     s.add_argument("--white-balance", type=float, default=None,
-                   help="colour temperature in K (2800..6500). Auto-WB is inert "
-                        "outdoors and casts daylight magenta; 3700 measured "
-                        "neutral on grass.")
+                   help="colour temperature in K (2800..6500), 0 = auto")
     s.add_argument("--no-average", action="store_true")
     s.add_argument("--gate", choices=("off", "warn", "block"), default="warn")
     s.add_argument("--require-pose", action="store_true")
     s.add_argument("--require-fix", action="store_true")
+    s.add_argument("--record", action="store_true",
+                   help="start continuous recording with the session")
+    s.add_argument("--no-record-frames", action="store_true",
+                   help="continuous recording: sweeps + IMU only, no JPEGs")
 
     sh = sub.add_parser("shot")
     sh.add_argument("--force", action="store_true")
@@ -216,10 +236,15 @@ def main(argv=None):
                         help="pick the longest exposure that keeps clipped "
                              "pixels under --target-sat, judged on real frames")
     mt.add_argument("--target-sat", type=float, default=0.5)
-    mt.add_argument("--gain", type=float, default=64.0,
-                    help="64 = unity gain; see --gain on `start`")
+    mt.add_argument("--gain-db", type=float, default=1.0,
+                    help="analog gain held fixed while exposure is bisected")
 
     sub.add_parser("stop")
+    rs = sub.add_parser("rec-start",
+                        help="record every sweep, frame and IMU sample into "
+                             "the open session until rec-stop / stop")
+    rs.add_argument("--no-frames", action="store_true")
+    sub.add_parser("rec-stop")
     sub.add_parser("status")
     sub.add_parser("hello")
     sub.add_parser("selftest")
@@ -248,20 +273,29 @@ def main(argv=None):
     with Link(args.host, args.user, args.port, args.direct, args.token) as link:
         if args.cmd == "start":
             req = {"cmd": "start", "name": args.name, "scans": args.scans,
-                   "exposure_ms": args.exposure_ms,
                    "average": not args.no_average, "gate": args.gate,
-                   **({"gain": args.gain} if args.gain is not None else {}),
+                   **({"exposure_ms": args.exposure_ms}
+                      if args.exposure_ms is not None else {}),
+                   **({"gain_db": args.gain_db} if args.gain_db is not None else {}),
                    **({"white_balance": args.white_balance}
                       if args.white_balance is not None else {}),
                    "require_pose": args.require_pose,
                    "require_fix": args.require_fix,
+                   **({"record": True} if args.record else {}),
+                   **({"record_frames": False} if args.no_record_frames else {}),
                    # the GCS clock is the good one; the Jetson has no RTC
                    "gcs_utc_ns": time.time_ns(),
                    "gcs_utc_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
             _print(link.call(req), args.raw)
         elif args.cmd == "meter":
             _print(link.call({"cmd": "meter", "target_sat": args.target_sat,
-                              "gain": args.gain}), args.raw)
+                              "gain_db": args.gain_db}), args.raw)
+        elif args.cmd == "rec-start":
+            _print(link.call({"cmd": "rec_start",
+                              **({"record_frames": False} if args.no_frames else {})}),
+                   args.raw)
+        elif args.cmd == "rec-stop":
+            _print(link.call({"cmd": "rec_stop"}), args.raw)
         elif args.cmd == "shot":
             _print(link.call({"cmd": "shot", "force": args.force,
                               "tag": args.tag}), args.raw)
