@@ -12,6 +12,7 @@ from asyncio.exceptions import TimeoutError, CancelledError
 import traceback
 from typing import Callable
 
+import dronemanager
 from dronemanager.drone import Drone, parse_address, DroneConfigs, DroneConfig
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 from dronemanager.utils import COMMON_FORMATTER, get_free_port, LOG_DIR, get_config
@@ -134,6 +135,7 @@ class DroneManager:
             self.logger.addHandler(console_handler)
 
         self.plugin_loader = PluginLoader(self, self.logger, "PluginLoader")
+        self.logger.info(f"Starting DroneManager version {dronemanager.__version__}")
 
     async def connect_to_drone(self,
                                name: str,
