@@ -171,7 +171,7 @@ Managing drone parameters
 
 The :ref:`parameters plugin <parameters_plugin>` saves the parameters of a connected drone to a file, applies such a
 file to a drone and reads or changes single parameters. This is useful for backing up a drone before changing its
-configuration, for restoring a known-good configuration, or for setting up several drones identically.
+configuration, for restoring a known-good configuration, or for bringing a whole fleet into the same configuration.
 
 Load the plugin with ``load parameters``, or add ``"parameters"`` to ``default_plugins`` in the
 :ref:`configuration file <config_file>` to load it on every start. All commands use the prefix ``param`` and take the
@@ -188,11 +188,18 @@ for example ``param-apply -h``.
 | ``param-list``                                 | List the saved parameter files.                                   |
 +------------------------------------------------+-------------------------------------------------------------------+
 | ``param-diff <drone> <file>``                  | Show which parameters would change if the file was applied.       |
-|                                                | Nothing is written.                                               |
+|                                                | Nothing is written. Calibration and tuning parameters are         |
+|                                                | skipped by default, see                                           |
+|                                                | :ref:`drone specific parameters <drone_specific_parameters>`.     |
+|                                                | Add ``--include_calibration`` and/or ``--include_tuning`` to      |
+|                                                | compare them as well.                                             |
 +------------------------------------------------+-------------------------------------------------------------------+
 | ``param-apply <drone> <file>``                 | Write all parameters from the file that differ from the drone.    |
-|                                                | Add ``--verify`` to reboot the drone afterwards and check that    |
-|                                                | the parameters persisted.                                         |
+|                                                | Calibration and tuning parameters are skipped by default, see     |
+|                                                | :ref:`drone specific parameters <drone_specific_parameters>`.     |
+|                                                | Add ``--include_calibration`` and/or ``--include_tuning`` to      |
+|                                                | apply them as well. Add ``--verify`` to reboot the drone          |
+|                                                | afterwards and check that the parameters persisted.               |
 +------------------------------------------------+-------------------------------------------------------------------+
 | ``param-get <drone> <name>``                   | Read a single parameter.                                          |
 +------------------------------------------------+-------------------------------------------------------------------+
@@ -213,6 +220,8 @@ Here, the configuration is saved as a baseline first. Then the maximum horizonta
 also lowers the maximum manual velocity ``MPC_VEL_MANUAL`` if it was higher, see
 :ref:`dependent parameters <dependent_parameters>`. ``param-set`` lists such side effects, and ``param-diff``
 shows both parameters as different from the baseline. ``param-apply`` restores both and verifies them after a reboot.
+To restore *everything* from a backup of the same drone, including its calibration and tuning, use
+``param-apply tom tom_baseline --include_calibration --include_tuning``.
 
 File names without a directory refer to the parameters directory and ``.params`` is added automatically if there is
 no extension. A full path to a file elsewhere works as well, such as one exported from QGroundControl.
@@ -221,19 +230,34 @@ Parameter files
 ^^^^^^^^^^^^^^^
 
 Files are written in the QGroundControl ``.params`` format, so they can also be opened in QGroundControl and Mission
-Planner. Mission Planner style files with ``NAME,VALUE`` lines can be read as well. They are saved in
-``src/dronemanager/resources/parameters``. The directory is part of the repository, but the files in it are ignored by
-git, so saved configurations stay on your machine. Use ``param-list`` to see them.
+Planner. Mission Planner style files with ``NAME,VALUE`` lines can be read as well. They are saved in the
+``Parameters`` folder of the DroneManager directory in your documents, next to the ``Logs`` folder and the
+configuration file. Use ``param-list`` to see them.
 
-Calibration parameters
-^^^^^^^^^^^^^^^^^^^^^^
+.. _drone_specific_parameters:
 
-Some parameters belong to one specific airframe or flight controller: sensor calibrations, sensor device IDs and
-statistics such as the total flight time. ``param-apply`` and ``param-diff`` skip these by default, so copying a
-configuration from one drone to another doesn't overwrite the calibration of the target drone. The log shows how many
-parameters were skipped. When restoring a backup to the very drone it was taken from, add ``--include_calibration``
-to apply them as well. The skipped patterns are listed in
-:py:data:`~dronemanager.plugins.parameters.DEFAULT_EXCLUDES`.
+Drone specific parameters
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Some parameters belong to one physical drone. ``param-apply`` and ``param-diff`` sort them into two groups and skip
+both by default:
+
+- **Calibration**: sensor calibrations and device IDs, level horizon, battery voltage and current calibration, RC
+  calibration and statistics such as the total flight time. Include them with ``--include_calibration``.
+  The patterns are listed in :py:data:`~dronemanager.plugins.parameters.CALIBRATION_PARAMS`.
+- **Tuning**: rate, attitude and position controller gains (PIDs), gyro and accelerometer filters, hover thrust and
+  the motor thrust curve. Include them with ``--include_tuning``.
+  The patterns are listed in :py:data:`~dronemanager.plugins.parameters.TUNING_PARAMS`.
+
+This way, one file can configure a whole fleet without overwriting what makes each drone fly well. For example, set
+up one drone for indoor flights with a motion capture system instead of GPS, save its parameters and apply the file
+to the rest of the swarm. In the same way, you can keep files for different operational scenarios, such as with or
+without remote ID, with or without a parachute, or with the geofence of a specific flight permit, and switch between
+them on any drone. The log shows how many parameters of each group were skipped.
+
+Use the flags when the source and target are the same drone, i.e. to restore a backup with both
+``--include_calibration --include_tuning``, or to copy a tune between identical airframes with ``--include_tuning``
+only.
 
 Only parameters that the drone actually has are applied. Parameters in the file that the drone doesn't know, for
 example from a different firmware version, are listed as a warning.
@@ -282,7 +306,7 @@ The plugin accepts two settings in the ``plugin_settings`` section of the config
 
    "parameters": {
      "directory": "C:/Users/me/drone_params",
-     "extra_excludes": ["RC*_TRIM", "BAT1_V_DIV"]
+     "extra_excludes": ["RC_MAP_*", "COM_RC_IN_MODE"]
    }
 
 ``directory`` stores the parameter files in a different location. ``extra_excludes`` lists further parameter name

@@ -388,7 +388,7 @@ class MAVPassthrough:
             except Exception as e:
                 self.logger.debug(f"Exception in the drone connection function: {repr(e)}", exc_info=True)
 
-    def _process_drone_message(self, msg):
+    def _process_drone_message(self, msg: mavutil.mavlink.MAVLink_message):
         if self.log_messages:
             self.logger.debug(f"Message from Drone {msg.get_srcSystem(), msg.get_srcComponent()}, "
                               f"{msg.to_dict()}")

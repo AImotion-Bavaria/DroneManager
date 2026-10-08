@@ -794,7 +794,7 @@ _DOCSTRING_SECTIONS = {"Args", "Arguments", "Parameters", "Returns", "Return", "
 
 
 def parse_docstring_args(doc_str: str) -> dict[str, str]:
-    """ Extracts the argument descriptions from the "Args:" section of a Google style doc string.
+    """Extracts the argument descriptions from the "Args:" section of a Google style doc string.
 
     Descriptions spanning multiple lines are joined into one line.
 
@@ -835,7 +835,14 @@ def parse_docstring_args(doc_str: str) -> dict[str, str]:
 
 
 def _docstring_description(doc_str: str) -> str:
-    """ The doc string up to the first section header such as "Args:"."""
+    """Get the doc string up to the first section header such as "Args:".
+
+    Args:
+        doc_str: The cleaned doc string.
+
+    Returns:
+        The summary and description part of the doc string.
+    """
     lines = []
     for line in doc_str.splitlines():
         if line.strip().rstrip(":") in _DOCSTRING_SECTIONS and line.strip().endswith(":"):
@@ -844,8 +851,9 @@ def _docstring_description(doc_str: str) -> str:
     return "\n".join(lines).strip()
 
 
-def add_cli_command_parser(command_parsers, cli_command: str, command: Callable, **parser_kwargs):
-    """ Adds a parser for a plugin command, using the signature and doc string of the command.
+def add_cli_command_parser(command_parsers: argparse._SubParsersAction, cli_command: str, command: Callable,
+                           **parser_kwargs) -> argparse.ArgumentParser:
+    """Adds a parser for a plugin command, using the signature and doc string of the command.
 
     The first line of the doc string is used as the short help in the command list, the doc string up to the first
     section as the description for ``<command> -h`` and the "Args:" section for the help of each argument. Boolean
@@ -859,6 +867,9 @@ def add_cli_command_parser(command_parsers, cli_command: str, command: Callable,
 
     Returns:
         The new parser.
+
+    Raises:
+        RuntimeError: If the signature of the command contains types that can't be parsed.
     """
     doc_str = inspect.getdoc(command)
     if doc_str is not None:
