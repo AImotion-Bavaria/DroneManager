@@ -11,15 +11,6 @@ from mavsdk.gimbal import SendMode as MAVSendMode
 from dronemanager.plugin import Plugin
 from dronemanager.utils import relative_gps
 
-# TODO: Big refactor, swap control management to gimbal class, better gimbal presence checking
-# TODO: PX4 only supports a single gimbal apparently
-# TODO: PX4 and our gimbal don't seem to play well together, for unknown reasons. Will probably have to talk to gimbal
-#  direct with raw malvink, mavsdk not useful here. PX4 already setup to passthrough, but we currently get command
-#  denied messages from FC that aren't relevant. This will also need a big rework of MAVPassthrough for more convenient
-#  command/response handling
-# As part of this: big rethink of what the gimbal class does and how
-
-
 ControlMode = MAVControlMode
 GimbalMode = MAVGimbalMode
 SendMode = MAVSendMode
@@ -190,7 +181,7 @@ class Gimbal:
 
     @property
     def in_control(self):
-        return self.primary_control[0] == 245 and self.primary_control[1] == 190
+        return self.primary_control[0] == self.dm.system_id and self.primary_control[1] == self.dm.component_id
 
     async def _gimbal_control_callback(self, msg):
         # Check for gimbal manager status messages (281)

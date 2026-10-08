@@ -22,10 +22,10 @@ from dronemanager.sensors.ecowitt import WeatherData
 from dronemanager.plugins.camera import CameraParameter, Camera
 from dronemanager.plugins.gimbal import Gimbal
 from dronemanager.plugins.controllers import PS4Mapping
-from dronemanager.utils import LOG_DIR, coroutine_awaiter
+from dronemanager.utils import CACHE_DIR, coroutine_awaiter
 
 
-CAPTURE_DIR = os.path.join(LOG_DIR, "engel_data_captures")
+CAPTURE_DIR = os.path.join(CACHE_DIR, "mission-data", "engel_data_captures")
 os.makedirs(CAPTURE_DIR, exist_ok=True)
 
 
@@ -338,22 +338,29 @@ class ENGELDataMission(Mission):
                 res = False
                 while not res:
                     res = await self.gimbal.set_gimbal_angles(reference_image.gimbal_att[1], reference_image.gimbal_att[2])  # Set a non-zero to make sure gimbal responds
-                await asyncio.sleep(1.5)  # Short sleep so gimbal has time to physically move.
+                # Wait for gimbal to have reached position.
+                while abs(self.gimbal.pitch - reference_image.gimbal_att[1]) > 1 or abs(self.gimbal.yaw - reference_image.gimbal_att[2]) > 1:
+                    await asyncio.sleep(0.1)
                 # Wait until camera parameters are set
                 await cam_set_task
-                # Point gimbal
+
                 target_gimbal_pitch = reference_image.gimbal_att[1]
                 target_gimbal_yaw = reference_image.gimbal_yaw_absolute
-
                 if self._gimbal_max_pitch < target_gimbal_pitch < self._gimbal_min_pitch:
                     self.logger.info("Replay exceeding gimbal limit, skipping...")
                     continue
 
-                await self.gimbal.set_gimbal_mode("lock")
-                res = False
-                while not res:
-                    res = await self.gimbal.set_gimbal_angles(target_gimbal_pitch, target_gimbal_yaw)
-                await asyncio.sleep(3)
+                # Final pointing in lock mode to compensate for drone attitude (commented out for now as the gimbal in
+                # lock mode fails to understand its own movement limit, leading to lock up and preventing my attempted
+                # workaround.)
+                # TODO: Maybe redo this in follow mode, with the target gimbal angle set based on drone attitude?
+                # TODO: Alternatively, try to detect that the gimbal is stuck on a limit and invert drone yaw in those
+                #  scenarios
+                #await self.gimbal.set_gimbal_mode("lock")
+                #res = False
+                #while not res:
+                #    res = await self.gimbal.set_gimbal_angles(target_gimbal_pitch, target_gimbal_yaw)
+                #await asyncio.sleep(3)
                 # Refine position and gimbal attitude based on previous image
                 # TODO: Integrate from other repo, more eval on simulation first
 
@@ -365,13 +372,8 @@ class ENGELDataMission(Mission):
                 res = False
                 while not res:
                     res = await self.gimbal.set_gimbal_angles(0.1, 0.1) # Set a non-zero to make sure gimbal responds
-                await asyncio.sleep(1)  # Short sleep so gimbal has time to physically move.
+                await asyncio.sleep(2)  # Short sleep so gimbal has time to physically move.
                 # Do it twice so we are definitely pointed forward.
-                await self.gimbal.set_gimbal_mode("follow")
-                res = False
-                while not res:
-                    res = await self.gimbal.set_gimbal_angles(0.1, 0.1) # Set a non-zero to make sure gimbal responds
-                await asyncio.sleep(1)  # Short sleep so gimbal has time to physically move.
             except Exception as e:
                 self.logger.warning(f"Exception with replay for capture {capture.capture_id}")
                 self.logger.debug(repr(e), exc_info=True)
@@ -424,18 +426,24 @@ class ENGELDataMission(Mission):
         target_dir.mkdir(exist_ok=True, parents=True)
         file_path = self._normal_dir_or_other_path(capture_file)
         file_name = file_path.name
-        captures_to_move = self._load_captures_from_file(file_path)
-        out_file = target_dir.joinpath(file_name)
-        self.logger.info(f"Copying files from {file_path.resolve()} to {out_file.resolve()}")
-        await asyncio.get_running_loop().run_in_executor(None, self._move, captures_to_move, file_path.parent, target_dir)
-        self._save_captures_to_file(captures_to_move, filename=out_file, make_relative=True)
-        self.logger.info("Done!")
+        try:
+            captures_to_move = self._load_captures_from_file(file_path)
+            out_file = target_dir.joinpath(file_name)
+            self.logger.info(f"Copying files from {file_path.resolve()} to {out_file.resolve()}")
+            await asyncio.get_running_loop().run_in_executor(None, self._move, captures_to_move, file_path.parent, target_dir)
+            self._save_captures_to_file(captures_to_move, filename=out_file, make_relative=True)
+            self.logger.info("Done!")
+        except FileNotFoundError:
+            self.logger.warning(f"File {file_path} not found")
 
     async def merge(self, other_files: list[str], output_file: str):
         captures = []
         for other_file in other_files:
             in_file = self._normal_dir_or_other_path(other_file)
-            captures.extend(self._load_captures_from_file(in_file))
+            try:
+                captures.extend(self._load_captures_from_file(in_file))
+            except FileNotFoundError:
+                self.logger.warning(f"File {in_file} not found")
         out_file = self._normal_dir_or_other_path(output_file)
         self._save_captures_to_file(captures, out_file)
 
@@ -448,8 +456,11 @@ class ENGELDataMission(Mission):
         file_path = self._normal_dir_or_other_path(filename)
         # If the file already exists, append new captures to old
         if merge_existing and file_path.exists():
-            old_captures = self._load_captures_from_file(file_path)
-            captures.extend(old_captures)
+            try:
+                old_captures = self._load_captures_from_file(file_path)
+                captures.extend(old_captures)
+            except FileNotFoundError:
+                self.logger.warning(f"File {file_path} not found")
 
         if make_relative:
             for capture in captures:
@@ -478,12 +489,14 @@ class ENGELDataMission(Mission):
 
     async def load_captures_from_file(self, filename: str):
         """ Load capture information from a file for the purpose of replaying it. """
-
         file_path = self._normal_dir_or_other_path(filename)
-        captures = self._load_captures_from_file(file_path)
-        self.loaded_captures = captures
-        self.loaded_file = filename
-        self.logger.info(f"Loaded past captures from file {file_path}")
+        try:
+            captures = self._load_captures_from_file(file_path)
+            self.loaded_captures = captures
+            self.loaded_file = filename
+            self.logger.info(f"Loaded past captures from file {file_path}")
+        except FileNotFoundError:
+            self.logger.warning(f"File {file_path} not found")
 
     async def reset(self):
         """ Clear capture info """
