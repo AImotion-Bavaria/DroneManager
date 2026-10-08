@@ -77,7 +77,7 @@ from dronemanager.plugin import Plugin, DOC_DIR
 from dronemanager.utils import parse_address
 
 
-PARAM_DIR: pathlib.Path = DOC_DIR.joinpath("Parameters")
+PARAM_DIR: pathlib.Path = DOC_DIR.joinpath("drone_parameters")
 """Default directory for parameter files, in the DroneManager directory in the user documents.
 
 :meta hide-value:"""
