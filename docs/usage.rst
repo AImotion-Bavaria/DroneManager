@@ -164,6 +164,130 @@ All the CLI commands are also available as functions. Plugins can be loaded and 
 instance under the name of the plugin. Note that ``await dm.close()`` should be called for any dm instance, to ensure any
 threads or event loops are shut down.
 
+.. _parameter_management:
+
+Managing drone parameters
+-------------------------
+
+The :ref:`parameters plugin <parameters_plugin>` saves the parameters of a connected drone to a file, applies such a
+file to a drone and reads or changes single parameters. This is useful for backing up a drone before changing its
+configuration, for restoring a known-good configuration, or for setting up several drones identically.
+
+Load the plugin with ``load parameters``, or add ``"parameters"`` to ``default_plugins`` in the
+:ref:`configuration file <config_file>` to load it on every start. All commands use the prefix ``param`` and take the
+name of a connected drone as the first argument. Append ``-h`` to any command to show its description and arguments,
+for example ``param-apply -h``.
+
++------------------------------------------------+-------------------------------------------------------------------+
+| Command                                        | Description                                                       |
++================================================+===================================================================+
+| ``param-save <drone> --filename <name>``       | Save all parameters to a file. Without ``--filename``, the file   |
+|                                                | is named after the drone and the current time. ``--force``        |
+|                                                | overwrites an existing file.                                      |
++------------------------------------------------+-------------------------------------------------------------------+
+| ``param-list``                                 | List the saved parameter files.                                   |
++------------------------------------------------+-------------------------------------------------------------------+
+| ``param-diff <drone> <file>``                  | Show which parameters would change if the file was applied.       |
+|                                                | Nothing is written.                                               |
++------------------------------------------------+-------------------------------------------------------------------+
+| ``param-apply <drone> <file>``                 | Write all parameters from the file that differ from the drone.    |
+|                                                | Add ``--verify`` to reboot the drone afterwards and check that    |
+|                                                | the parameters persisted.                                         |
++------------------------------------------------+-------------------------------------------------------------------+
+| ``param-get <drone> <name>``                   | Read a single parameter.                                          |
++------------------------------------------------+-------------------------------------------------------------------+
+| ``param-set <drone> <name> <value>``           | Change a single parameter. The value is read back to confirm it.  |
++------------------------------------------------+-------------------------------------------------------------------+
+
+A typical session with a drone connected over WiFi might look like this::
+
+   connect tom udp://192.168.1.31:14561
+   load parameters
+   param-save tom --filename tom_baseline
+   param-set tom MPC_XY_VEL_MAX 8
+   param-get tom MPC_XY_VEL_MAX
+   param-diff tom tom_baseline
+   param-apply tom tom_baseline --verify
+
+Here, the configuration is saved as a baseline first. Then the maximum horizontal velocity is lowered. On PX4, this
+also lowers the maximum manual velocity ``MPC_VEL_MANUAL`` if it was higher, see
+:ref:`dependent parameters <dependent_parameters>`. ``param-set`` lists such side effects, and ``param-diff``
+shows both parameters as different from the baseline. ``param-apply`` restores both and verifies them after a reboot.
+
+File names without a directory refer to the parameters directory and ``.params`` is added automatically if there is
+no extension. A full path to a file elsewhere works as well, such as one exported from QGroundControl.
+
+Parameter files
+^^^^^^^^^^^^^^^
+
+Files are written in the QGroundControl ``.params`` format, so they can also be opened in QGroundControl and Mission
+Planner. Mission Planner style files with ``NAME,VALUE`` lines can be read as well. They are saved in
+``src/dronemanager/resources/parameters``. The directory is part of the repository, but the files in it are ignored by
+git, so saved configurations stay on your machine. Use ``param-list`` to see them.
+
+Calibration parameters
+^^^^^^^^^^^^^^^^^^^^^^
+
+Some parameters belong to one specific airframe or flight controller: sensor calibrations, sensor device IDs and
+statistics such as the total flight time. ``param-apply`` and ``param-diff`` skip these by default, so copying a
+configuration from one drone to another doesn't overwrite the calibration of the target drone. The log shows how many
+parameters were skipped. When restoring a backup to the very drone it was taken from, add ``--include_calibration``
+to apply them as well. The skipped patterns are listed in
+:py:data:`~dronemanager.plugins.parameters.DEFAULT_EXCLUDES`.
+
+Only parameters that the drone actually has are applied. Parameters in the file that the drone doesn't know, for
+example from a different firmware version, are listed as a warning.
+
+.. _dependent_parameters:
+
+Dependent parameters
+^^^^^^^^^^^^^^^^^^^^
+
+Flight controllers limit some parameters based on others. For example, PX4 keeps ``MPC_VEL_MANUAL`` at or below
+``MPC_XY_VEL_MAX`` and reports "Manual speed has been constrained by max speed" when it lowers it. As a result, setting
+one parameter can change another one:
+
+- ``param-set`` compares all parameters before and after the change and warns about any other parameter that changed.
+- ``param-apply`` reads the parameters again after writing them. If the flight controller changed any of them, for
+  example because a limit was only raised later in the file, they are written again. This is repeated up to three
+  times. If a parameter still doesn't stick, the file contains values that conflict with each other, i.e. a manual
+  velocity above the maximum velocity, and ``param-apply`` reports a warning and fails.
+
+Verifying parameters after a reboot
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Many parameters only take effect after a reboot, and the flight controller can reject or reset values when it boots.
+With ``param-apply <drone> <file> --verify``, DroneManager reboots the drone after writing the parameters, reads all
+parameters again and compares them to the file. The log ends with either ``Verification PASSED`` or
+``Verification FAILED`` and a list of each parameter with its expected and actual value. The drone must be disarmed.
+
+How DroneManager handles the reboot depends on the connection:
+
+- **UDP or TCP**, i.e. a drone connected over WiFi: The connection stays open while the flight controller reboots.
+  DroneManager waits for the drone heartbeat to disappear and come back. If it doesn't come back, DroneManager tries
+  to reconnect under the same name. If the heartbeat never disappears, the reboot can't be confirmed and the
+  verification fails.
+- **Serial**, i.e. a drone connected with USB: The serial port disappears while the flight controller reboots. The
+  drone is disconnected in DroneManager and connected again under the same name and address once the port is back.
+
+The ``--reboot_timeout`` argument sets how long to wait for the drone to come back, 90 seconds by default.
+
+Some parameters only appear after a reboot, for example the parameters of a driver that was just enabled. They can't
+be applied before the reboot, so the verification lists them as a warning. Run ``param-apply`` again to set them.
+
+Plugin settings
+^^^^^^^^^^^^^^^
+
+The plugin accepts two settings in the ``plugin_settings`` section of the configuration file::
+
+   "parameters": {
+     "directory": "C:/Users/me/drone_params",
+     "extra_excludes": ["RC*_TRIM", "BAT1_V_DIV"]
+   }
+
+``directory`` stores the parameter files in a different location. ``extra_excludes`` lists further parameter name
+patterns that should never be applied from a file, using ``*`` and ``?`` as wildcards.
+
 Example mission
 ---------------
 
@@ -241,6 +365,8 @@ With the drones connected and all the scripts loaded you can begin flying missio
 3. To fly drones from any position to their start position one-by-one you can use ``uam-reset``. This should only be used 
    in Gazebo, the drones should already be at their start positions in a real demo.
 
+
+.. _config_file:
 
 Configuration file
 ------------------

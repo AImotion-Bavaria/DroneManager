@@ -62,3 +62,7 @@ logs/
 
 # MAVSDK server executable on windows
 src/dronemanager/mavsdk_server_bin.exe
+
+# Parameter files saved by the parameters plugin are local only
+src/dronemanager/resources/parameters/*
+!src/dronemanager/resources/parameters/.gitkeep

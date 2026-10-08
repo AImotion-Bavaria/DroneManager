@@ -5,6 +5,7 @@ import datetime
 import inspect
 import os
 import pathlib
+import re
 import shlex
 import types
 import typing
@@ -356,29 +357,7 @@ class CommandScreen(Screen):
                 command = commands[command_name]
                 cli_command = f"{plugin.PREFIX}-{command_name}".lower()
                 self.logger.debug(f"Inspecting command {command_name}")
-                doc_str = inspect.getdoc(command)
-                if doc_str is not None:
-                    help_string = doc_str.split("\n")[0]
-                else:
-                    help_string = "No doc string for this function!"
-                tmp_parser = self.command_parser.add_parser(cli_command, help=help_string, logger=self.logger)
-                for arg in check_cli_command_signatures(command):
-                    is_invalid, name, is_list, is_required, accepts_none, base_type, is_kwonly, has_default, default = arg
-                    arg_name = name if is_required else f"--{name}"
-                    arg_kwargs = {
-                        "type": base_type,
-                    }
-                    if is_invalid:
-                        raise RuntimeError(f"CLI command {command_name} has invalid parameter types for parameter {name}!")
-                    if is_list and is_required:
-                        arg_kwargs["nargs"] = "+"
-                    elif is_list and not is_required:
-                        arg_kwargs["nargs"] = "*"
-                    if has_default:
-                        arg_kwargs["default"] = default
-                    tmp_parser.add_argument(arg_name, **arg_kwargs)
-                    # TODO: Add help to argument from parameters in doc string
-                    self.logger.debug(f"Added Argument {arg_name}: {base_type, is_list, is_required}")
+                add_cli_command_parser(self.command_parser, cli_command, command, logger=self.logger)
                 self.dynamic_commands[cli_command] = command
             return True
         except Exception as e:
@@ -808,6 +787,115 @@ def check_cli_command_signatures(command: Callable) -> list[tuple]:
         args_defaults.append(default)
 
     return list(zip(args_invalid, args_name, args_list, args_required, args_accepts_none, args_types, args_kwonly, args_has_defaults, args_defaults))
+
+
+_DOCSTRING_SECTIONS = {"Args", "Arguments", "Parameters", "Returns", "Return", "Raises", "Yields", "Example",
+                       "Examples", "Note", "Notes", "Attributes"}
+
+
+def parse_docstring_args(doc_str: str) -> dict[str, str]:
+    """ Extracts the argument descriptions from the "Args:" section of a Google style doc string.
+
+    Descriptions spanning multiple lines are joined into one line.
+
+    Args:
+        doc_str: The cleaned doc string, i.e. from :py:func:`inspect.getdoc`.
+
+    Returns:
+        A dictionary with the argument names as keys and their descriptions as values.
+    """
+    arg_helps = {}
+    in_args = False
+    section_indent = 0
+    entry_indent = None
+    current = None
+    for line in doc_str.splitlines():
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if not in_args:
+            if stripped in ("Args:", "Arguments:"):
+                in_args = True
+                section_indent = indent
+            continue
+        if not stripped:
+            continue
+        if indent <= section_indent:
+            break
+        if entry_indent is None:
+            entry_indent = indent
+        if indent == entry_indent:
+            match = re.match(r"^\**(\w+)\s*(?:\([^)]*\))?\s*:\s*(.*)$", stripped)
+            if match:
+                current = match.group(1)
+                arg_helps[current] = match.group(2)
+                continue
+        if current is not None:
+            arg_helps[current] += " " + stripped
+    return {name: text.strip() for name, text in arg_helps.items()}
+
+
+def _docstring_description(doc_str: str) -> str:
+    """ The doc string up to the first section header such as "Args:"."""
+    lines = []
+    for line in doc_str.splitlines():
+        if line.strip().rstrip(":") in _DOCSTRING_SECTIONS and line.strip().endswith(":"):
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def add_cli_command_parser(command_parsers, cli_command: str, command: Callable, **parser_kwargs):
+    """ Adds a parser for a plugin command, using the signature and doc string of the command.
+
+    The first line of the doc string is used as the short help in the command list, the doc string up to the first
+    section as the description for ``<command> -h`` and the "Args:" section for the help of each argument. Boolean
+    arguments with a default of ``False`` become flags, i.e. ``--verify`` instead of ``--verify True``.
+
+    Args:
+        command_parsers: The subparsers object to add the parser to.
+        cli_command: The name of the command on the command line.
+        command: The coroutine function executed for this command.
+        **parser_kwargs: Passed on to ``add_parser``.
+
+    Returns:
+        The new parser.
+    """
+    doc_str = inspect.getdoc(command)
+    if doc_str is not None:
+        help_string = doc_str.split("\n")[0]
+        description = _docstring_description(doc_str)
+        arg_helps = parse_docstring_args(doc_str)
+    else:
+        help_string = "No doc string for this function!"
+        description = None
+        arg_helps = {}
+    if description:
+        description = description.replace("%", "%%")
+    parser = command_parsers.add_parser(cli_command, help=help_string.replace("%", "%%"), description=description,
+                                        **parser_kwargs)
+    for arg in check_cli_command_signatures(command):
+        is_invalid, name, is_list, is_required, accepts_none, base_type, is_kwonly, has_default, default = arg
+        if is_invalid:
+            raise RuntimeError(f"CLI command {cli_command} has invalid parameter types for parameter {name}!")
+        arg_name = name if is_required else f"--{name}"
+        arg_help = arg_helps.get(name, "")
+        arg_kwargs = {}
+        if base_type is bool and not is_list and has_default and default is False:
+            arg_kwargs["action"] = "store_true"
+        else:
+            arg_kwargs["type"] = base_type
+            if is_list and is_required:
+                arg_kwargs["nargs"] = "+"
+            elif is_list and not is_required:
+                arg_kwargs["nargs"] = "*"
+            if has_default:
+                arg_kwargs["default"] = default
+                if default is not None:
+                    arg_help = f"{arg_help} Default: {default}".strip()
+        if arg_help:
+            arg_kwargs["help"] = arg_help.replace("%", "%%")
+        parser.add_argument(arg_name, **arg_kwargs)
+    return parser
 
 
 def main():
