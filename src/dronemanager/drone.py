@@ -696,46 +696,43 @@ class DroneMAVSDK(Drone):
         if scheme == "serial":
             mavsdk_passthrough_string = f"serial://{loc}"
         else:
-            mavsdk_passthrough_string = f"{scheme}://:{appendix}"
+            mavsdk_passthrough_string = f"{scheme}://{loc}:{appendix}"
 
         if log_telemetry is not None:
             self.config.log_telemetry = log_telemetry
 
         try:
             gcs_system_id, gcs_component_id = self.gcs_ident
-            if self.server_addr is None:
-                self.logger.debug(f"Starting up own MAVSDK Server instance with remote "
-                                  f"connection {mavsdk_passthrough_string}")
             self._mavsdk = Mavsdk(Configuration.create_manual(gcs_system_id, gcs_component_id, True))
             #self.system = System(mavsdk_server_address=self.server_addr, port=self.server_port,
             #                     sysid=gcs_system_id, compid=gcs_component_id)
-            self._conn_handle = await asyncio.create_task(self._mavsdk.add_any_connection(mavsdk_passthrough_string))
+            self._conn_handle = await self._mavsdk.add_any_connection(mavsdk_passthrough_string)
 
-            self.system = await self._mavsdk.first_autopilot(-1)
-            async for connected in self.system.is_connected_state():
-                if connected:
+            self.system = await self._mavsdk.first_autopilot(10.0)
+            if await self.system.is_connected():
 
-                    self._mavdirect = MavlinkDirectAsync(self.system)
-                    self._mavparam = ParamAsync(self.system)
-                    self._mavtelem = TelemetryAsync(self.system)
-                    self._mavaction = ActionAsync(self.system)
-                    self._mavoffboard = OffboardAsync(self.system)
-                    self._mavmanual = ManualControlAsync(self.system)
-                    self._mavcamera = CameraAsync(self.system)
-                    self._mavgimbal = GimbalAsync(self.system)
+                self._mavdirect = MavlinkDirectAsync(self.system)
+                self._mavparam = ParamAsync(self.system)
+                self._mavtelem = TelemetryAsync(self.system)
+                self._mavaction = ActionAsync(self.system)
+                self._mavoffboard = OffboardAsync(self.system)
+                self._mavmanual = ManualControlAsync(self.system)
+                self._mavcamera = CameraAsync(self.system)
+                self._mavgimbal = GimbalAsync(self.system)
 
-                    self._running_tasks.add(asyncio.create_task(self._process_messages()))
-                    self._get_drone_info()
-                    await self._configure_message_rates()
-                    await self._schedule_update_tasks()
-                    self.config.address = self.drone_addr
+                self._running_tasks.add(asyncio.create_task(self._process_messages()))
+                self._get_drone_info()
+                await self._configure_message_rates()
+                await self._schedule_update_tasks()
+                self.config.address = self.drone_addr
 
-                    param_load_task = asyncio.create_task(self.load_parameters())
-                    param_load_task_awaiter = asyncio.create_task(coroutine_awaiter(param_load_task, self.logger))
-                    self._running_tasks.add(param_load_task)
-                    self._running_tasks.add(param_load_task_awaiter)
-                    self.logger.debug(f"Connected!")
-                    return True
+                param_load_task = asyncio.create_task(self.load_parameters())
+                param_load_task_awaiter = asyncio.create_task(coroutine_awaiter(param_load_task, self.logger))
+                self._running_tasks.add(param_load_task)
+                self._running_tasks.add(param_load_task_awaiter)
+                self.logger.debug(f"Connected!")
+                self._is_connected = True
+                return True
         except Exception as e:
             self.logger.debug(f"Exception during connection: {repr(e)}", exc_info=True)
         return False
@@ -864,7 +861,7 @@ class DroneMAVSDK(Drone):
     async def load_parameters(self):
         self.logger.info(f"Loading parameters...")
         try:
-            await self._mavparam.select_component(1, ProtocolVersion.V1)
+            #await self._mavparam.select_component(1, ProtocolVersion.V1)
             parameters = await self._mavparam.get_all_params()
             raw_params = {}
             for param in parameters.int_params:
@@ -948,8 +945,8 @@ class DroneMAVSDK(Drone):
             await asyncio.sleep(5)
 
     async def _connect_check(self):
-            async for connected in self.system.is_connected_state():
-                self._is_connected = connected
+        async for connected in self.system.is_connected_state():
+            self._is_connected = connected
 
     async def _arm_check(self):
         async for arm in self._mavtelem.subscribe_armed():
