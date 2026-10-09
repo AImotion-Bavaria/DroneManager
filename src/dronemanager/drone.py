@@ -14,16 +14,16 @@ from typing import Coroutine
 
 import numpy as np
 
-from mavsdk import System
-from mavsdk.telemetry import FlightMode as MAVSDKFlightMode
-from mavsdk.telemetry import FixType as MAVSDKFixType
-from mavsdk.telemetry import StatusTextType
-from mavsdk.action import ActionError, OrbitYawBehavior
-from mavsdk.offboard import PositionNedYaw, PositionGlobalYaw, VelocityNedYaw, AccelerationNed, OffboardError, \
-    VelocityBodyYawspeed
-from mavsdk.manual_control import ManualControlError
-from mavsdk.mavlink_direct import MavlinkMessage
-from mavsdk.param import ProtocolVersion
+from mavsdk.asyncio import Mavsdk, Configuration, System
+from mavsdk.asyncio.plugins.telemetry import FlightMode as MAVSDKFlightMode
+from mavsdk.asyncio.plugins.telemetry import FixType as MAVSDKFixType
+from mavsdk.asyncio.plugins.telemetry import StatusTextType, TelemetryAsync
+from mavsdk.asyncio.plugins.action import ActionAsync, ActionError, OrbitYawBehavior
+from mavsdk.asyncio.plugins.offboard import PositionNedYaw, PositionGlobalYaw, VelocityNedYaw, AccelerationNed, OffboardError, \
+    VelocityBodyYawspeed, OffboardAsync
+from mavsdk.asyncio.plugins.manual_control import ManualControlError
+from mavsdk.asyncio.plugins.mavlink_direct import MavlinkMessage, MavlinkDirectAsync
+from mavsdk.asyncio.plugins.param import ProtocolVersion, ParamAsync
 
 from dronemanager.utils import dist_ned, dist_gps, relative_gps, coroutine_awaiter
 from dronemanager.utils import parse_address, COMMON_FORMATTER
@@ -153,7 +153,7 @@ class Drone(ABC, threading.Thread):
     VALID_FLIGHTMODES = set()
     VALID_SETPOINT_TYPES = set()
 
-    def __init__(self, name, gcs_ident, *args, log_to_file=True, config: DroneConfig | None = None, **kwargs):
+    def __init__(self, name: str, gcs_ident, *args, log_to_file=True, config: DroneConfig | None = None, **kwargs):
         threading.Thread.__init__(self)
         self.name = name
         self.gcs_ident = gcs_ident
@@ -560,12 +560,12 @@ class DroneMAVSDK(Drone):
     # What type of path setpoints this classes fly_<> commands can follow. This limits what Trajectory generators
     # can be used.
 
-    def __init__(self, name, gcs_ident, mavsdk_server_address: str | None = None, mavsdk_server_port: int = 50051,
+    def __init__(self, name: str, gcs_ident, mavsdk_server_address: str | None = None, mavsdk_server_port: int = 50051,
                  config: DroneConfig | None = None):
         # TODO: Currently exceptions in this block are not logged to drone manager, as the handler is added only after
         #  connecting.
         super().__init__(name, gcs_ident, config=config)
-        self.system: System | None = None
+        self.system: System = None
         self.server_addr = mavsdk_server_address
         self.server_port = mavsdk_server_port
         self._server_process: Popen | None = None
@@ -573,7 +573,7 @@ class DroneMAVSDK(Drone):
         self._is_armed: bool = False
         self._flightmode: FlightMode = FlightMode.UNKNOWN
         self._in_air: bool = False
-        self._gps_info: FixType | None = None
+        self._gps_info: FixType = None
         self._position_g: np.ndarray = np.zeros((4,))  # Latitude, Longitude, AMSL, Relative altitude to takeoff
         self._position_ned: np.ndarray = np.zeros((3,))     # NED
         self._velocity: np.ndarray = np.zeros((3,))         # NED
@@ -587,6 +587,15 @@ class DroneMAVSDK(Drone):
         self._message_callbacks: dict[str, set] = dict()
         self._message_listeners: dict[tuple[str, int], set] = dict()
         self._ack_listeners: dict[tuple[int, int, int, int, int], list] = dict()
+
+        # Temporary attributes for new mavsdk version
+        self._conn_handle = None
+        self._mavsdk: Mavsdk = None
+        self._mavdirect: MavlinkDirectAsync = None
+        self._mavparam: ParamAsync = None
+        self._mavtelem: TelemetryAsync = None
+        self._mavaction: ActionAsync = None
+        self._mavoffboard: OffboardAsync = None
 
         # How often (per second) we request position information from the drone. The same interval is used by path
         # planning algorithms for their time resolution.
@@ -690,17 +699,23 @@ class DroneMAVSDK(Drone):
         try:
             gcs_system_id, gcs_component_id = self.gcs_ident
             if self.server_addr is None:
-                self.logger.debug(f"Starting up own MAVSDK Server instance with app port {self.server_port} and remote "
+                self.logger.debug(f"Starting up own MAVSDK Server instance with remote "
                                   f"connection {mavsdk_passthrough_string}")
-            self.system = System(mavsdk_server_address=self.server_addr, port=self.server_port,
-                                 sysid=gcs_system_id, compid=gcs_component_id)
+            self._mavsdk = Mavsdk(Configuration.create_manual(gcs_system_id, gcs_component_id, True))
+            #self.system = System(mavsdk_server_address=self.server_addr, port=self.server_port,
+            #                     sysid=gcs_system_id, compid=gcs_component_id)
+            self._conn_handle = await asyncio.create_task(self._mavsdk.add_any_connection(mavsdk_passthrough_string))
 
-            connected = asyncio.create_task(self.system.connect(system_address=mavsdk_passthrough_string))
-            self._running_tasks.add(connected)
-            await connected
+            self.system = await self._mavsdk.first_autopilot(-1)
+            async for connected in self.system.is_connected_state():
+                if connected:
 
-            async for state in self.system.core.connection_state():
-                if state.is_connected:
+                    self._mavdirect = MavlinkDirectAsync(self.system)
+                    self._mavparam = ParamAsync(self.system)
+                    self._mavtelem = TelemetryAsync(self.system)
+                    self._mavaction = ActionAsync(self.system)
+                    self._mavoffboard = OffboardAsync(self.system)
+
                     self._running_tasks.add(asyncio.create_task(self._process_messages()))
                     self._get_drone_info()
                     await self._configure_message_rates()
@@ -729,7 +744,7 @@ class DroneMAVSDK(Drone):
             self._message_callbacks[message_name].remove(callback)
 
     async def send_message(self, msg: MavlinkMessage):
-        return await self.system.mavlink_direct.send_message(msg)
+        return await self._mavdirect.send_message(msg)
 
     def listen_next_message(self, msg_name: str, target_component: int):
         fut = asyncio.Future()
@@ -781,7 +796,7 @@ class DroneMAVSDK(Drone):
 
     async def _process_messages(self):
         try:
-            async for message in self.system.mavlink_direct.message(""):
+            async for message in self._mavdirect.subscribe_message(""):
                 if self.config.log_telemetry:
                     self.telem_logger.debug(f"Received {message.message_name} from {message.system_id, message.component_id} to {message.target_system_id, message.target_component_id}: {message.fields_json}")
                 # Check that the message is for us
@@ -841,8 +856,8 @@ class DroneMAVSDK(Drone):
     async def load_parameters(self):
         self.logger.info(f"Loading parameters...")
         try:
-            await self.system.param.select_component(1, ProtocolVersion.V1)
-            parameters = await self.system.param.get_all_params()
+            await self._mavparam.select_component(1, ProtocolVersion.V1)
+            parameters = await self._mavparam.get_all_params()
             raw_params = {}
             for param in parameters.int_params:
                 raw_params[param.name] = (param.value, int)
@@ -907,12 +922,12 @@ class DroneMAVSDK(Drone):
     async def _configure_message_rates(self) -> None:
         if self.is_connected:
             try:
-                await self.system.telemetry.set_rate_position(self.position_update_rate)
-                await self.system.telemetry.set_rate_position_velocity_ned(self.position_update_rate)
-                await self.system.telemetry.set_rate_attitude_euler(self.position_update_rate)
-                await self.system.telemetry.set_rate_altitude(self.position_update_rate)
-                await self.system.telemetry.set_rate_battery(self.position_update_rate)
-                await self.system.telemetry.set_rate_gps_info(self.position_update_rate)
+                await self._mavtelem.set_rate_position(self.position_update_rate)
+                await self._mavtelem.set_rate_position_velocity_ned(self.position_update_rate)
+                await self._mavtelem.set_rate_attitude_euler(self.position_update_rate)
+                await self._mavtelem.set_rate_altitude(self.position_update_rate)
+                await self._mavtelem.set_rate_battery(self.position_update_rate)
+                await self._mavtelem.set_rate_gps_info(self.position_update_rate)
             except Exception as e:
                 self.logger.warning(f"Couldn't set message rate!")
                 self.logger.debug(f"{repr(e)}", exc_info=True)
@@ -925,34 +940,34 @@ class DroneMAVSDK(Drone):
             await asyncio.sleep(5)
 
     async def _connect_check(self):
-            async for state in self.system.core.connection_state():
-                self._is_connected = state.is_connected
+            async for connected in self.system.is_connected_state():
+                self._is_connected = connected
 
     async def _arm_check(self):
-        async for arm in self.system.telemetry.armed():
+        async for arm in self._mavtelem.subscribe_armed():
             self._is_armed = arm
 
     async def _flightmode_check(self):
-        async for flightmode in self.system.telemetry.flight_mode():
+        async for flightmode in self._mavtelem.subscribe_flight_mode():
             self._flightmode = flightmode
 
     async def _inair_check(self):
-        async for in_air in self.system.telemetry.in_air():
+        async for in_air in self._mavtelem.subscribe_in_air():
             self._in_air = in_air
 
     async def _gps_check(self):
-        async for gps in self.system.telemetry.gps_info():
+        async for gps in self._mavtelem.subscribe_gps_info():
             self._gps_info = gps.fix_type
 
     async def _g_pos_check(self):
-        async for pos in self.system.telemetry.position():
+        async for pos in self._mavtelem.subscribe_position():
             self._position_g[0] = pos.latitude_deg
             self._position_g[1] = pos.longitude_deg
             self._position_g[2] = pos.absolute_altitude_m
             self._position_g[3] = pos.relative_altitude_m
 
     async def _vel_rpos_check(self):
-        async for pos_vel in self.system.telemetry.position_velocity_ned():
+        async for pos_vel in self._mavtelem.subscribe_position_velocity_ned():
             self._velocity[0] = pos_vel.velocity.north_m_s
             self._velocity[1] = pos_vel.velocity.east_m_s
             self._velocity[2] = pos_vel.velocity.down_m_s
@@ -961,17 +976,17 @@ class DroneMAVSDK(Drone):
             self._position_ned[2] = pos_vel.position.down_m
 
     async def _att_check(self):
-        async for att in self.system.telemetry.attitude_euler():
+        async for att in self._mavtelem.subscribe_attitude_euler():
             self._attitude[0] = att.roll_deg
             self._attitude[1] = att.pitch_deg
             self._attitude[2] = att.yaw_deg
 
     async def _heading_check(self):
-        async for heading in self.system.telemetry.heading():
+        async for heading in self._mavtelem.subscribe_heading():
             self._heading = heading.heading_deg
 
     async def _battery_check(self):
-        async for battery in self.system.telemetry.battery():
+        async for battery in self._mavtelem.subscribe_battery():
             battery_id = battery.id
             if battery_id in self._batteries:
                 own_battery = self._batteries[battery_id]
@@ -985,7 +1000,7 @@ class DroneMAVSDK(Drone):
             own_battery.temperature = battery.temperature_degc
 
     async def _status_check(self):
-        async for message in self.system.telemetry.status_text():
+        async for message in self._mavtelem.subscribe_status_text():
             if message.type is StatusTextType.DEBUG:
                 self.logger.debug(f"{message.text}")
             elif message.type in [StatusTextType.INFO, StatusTextType.NOTICE]:
@@ -999,7 +1014,7 @@ class DroneMAVSDK(Drone):
         timeout = 5
         self.logger.info("Arming!")
         await super().arm()
-        result = await self._error_wrapper(self.system.action.arm, ActionError)
+        result = await self._error_wrapper(self._mavaction.arm, ActionError)
         if result and not isinstance(result, Exception):
             start_time = time.time()
             while not self.is_armed:
@@ -1018,7 +1033,7 @@ class DroneMAVSDK(Drone):
         if self.path_follower.is_active:
             await self.path_follower.deactivate()
         await super().disarm()
-        result = await self._error_wrapper(self.system.action.disarm, ActionError)
+        result = await self._error_wrapper(self._mavaction.disarm, ActionError)
         if result and not isinstance(result, Exception):
             start_time = time.time()
             while self.is_armed:
@@ -1067,7 +1082,7 @@ class DroneMAVSDK(Drone):
         self.logger.info("Trying to take off...")
         await super().takeoff(altitude=altitude)
         self._can_takeoff()
-        result = await self._error_wrapper(self.system.action.takeoff, ActionError)
+        result = await self._error_wrapper(self._mavaction.takeoff, ActionError)
         if isinstance(result, Exception):
             self.logger.warning("Takeoff denied!")
         while self.flightmode is not FlightMode.TAKEOFF:
@@ -1105,20 +1120,20 @@ class DroneMAVSDK(Drone):
         await super().change_flight_mode(flightmode)
         start_time = time.time()
         if flightmode == "hold":
-            result = await self._error_wrapper(self.system.action.hold, ActionError)
+            result = await self._error_wrapper(self._mavaction.hold, ActionError)
             target_flight_mode = FlightMode.HOLD
         elif flightmode == "offboard":
-            result = await self._error_wrapper(self.system.offboard.start, OffboardError)
+            result = await self._error_wrapper(self._mavoffboard.start, OffboardError)
             target_flight_mode = FlightMode.OFFBOARD
         elif flightmode == "return":
-            result = await self._error_wrapper(self.system.action.return_to_launch, ActionError)
+            result = await self._error_wrapper(self._mavaction.return_to_launch, ActionError)
             target_flight_mode = FlightMode.RETURN_TO_LAUNCH
         elif flightmode == "land":
-            result = await self._error_wrapper(self.system.action.land, ActionError)
+            result = await self._error_wrapper(self._mavaction.land, ActionError)
             target_flight_mode = FlightMode.LAND
         elif flightmode == "takeoff":
             self._can_takeoff()
-            result = await self._error_wrapper(self.system.action.takeoff, ActionError)
+            result = await self._error_wrapper(self._mavaction.takeoff, ActionError)
             target_flight_mode = FlightMode.TAKEOFF
         elif flightmode == "position":
             result = await self._error_wrapper(self.system.manual_control.start_position_control, ManualControlError)
@@ -1149,34 +1164,34 @@ class DroneMAVSDK(Drone):
         setpoint_type = setpoint.type
         if setpoint_type == WayPointType.POS_NED:
             point_ned_yaw = PositionNedYaw(*setpoint.pos, setpoint.yaw)
-            return await self._error_wrapper(self.system.offboard.set_position_ned, OffboardError, point_ned_yaw)
+            return await self._error_wrapper(self._mavoffboard.set_position_ned, OffboardError, point_ned_yaw)
         elif setpoint_type == WayPointType.POS_VEL_NED:
             point_ned_yaw = PositionNedYaw(*setpoint.pos, setpoint.yaw)
             velocity_ned_yaw = VelocityNedYaw(*setpoint.vel, setpoint.yaw)
-            return await self._error_wrapper(self.system.offboard.set_position_velocity_ned, OffboardError,
+            return await self._error_wrapper(self._mavoffboard.set_position_velocity_ned, OffboardError,
                                              point_ned_yaw, velocity_ned_yaw)
         elif setpoint_type == WayPointType.POS_VEL_ACC_NED:
             yaw = setpoint.yaw
             point_ned_yaw = PositionNedYaw(*setpoint.pos, yaw)
             velocity_ned_yaw = VelocityNedYaw(*setpoint.vel, yaw)
             acc_ned = AccelerationNed(*setpoint.acc)
-            return await self._error_wrapper(self.system.offboard.set_position_velocity_acceleration_ned,
+            return await self._error_wrapper(self._mavoffboard.set_position_velocity_acceleration_ned,
                                              OffboardError,
                                              point_ned_yaw,
                                              velocity_ned_yaw,
                                              acc_ned)
         elif setpoint_type == WayPointType.VEL_NED:
             vel_yaw = VelocityNedYaw(*setpoint.vel, setpoint.yaw)
-            return await self._error_wrapper(self.system.offboard.set_velocity_ned, OffboardError, vel_yaw)
+            return await self._error_wrapper(self._mavoffboard.set_velocity_ned, OffboardError, vel_yaw)
         elif setpoint_type == WayPointType.VEL_BODY:
             vel_yawrate = VelocityBodyYawspeed(*setpoint.vel, setpoint.yaw_rate)
-            return await self._error_wrapper(self.system.offboard.set_velocity_body, OffboardError, vel_yawrate)
+            return await self._error_wrapper(self._mavoffboard.set_velocity_body, OffboardError, vel_yawrate)
         elif setpoint_type == WayPointType.POS_GLOBAL:
             latitude, longitude, amsl = setpoint.gps
             alt_type = PositionGlobalYaw.AltitudeType.AMSL
             position = PositionGlobalYaw(lat_deg=latitude, lon_deg=longitude, alt_m=amsl,
                                          yaw_deg=setpoint.yaw, altitude_type=alt_type)
-            return await self._error_wrapper(self.system.offboard.set_position_global, OffboardError, position)
+            return await self._error_wrapper(self._mavoffboard.set_position_global, OffboardError, position)
         else:
             raise RuntimeError("Invalid SetPointType!")
 
@@ -1350,10 +1365,13 @@ class DroneMAVSDK(Drone):
 
     async def move(self, offset, yaw: float | None = None, use_gps=True, tolerance=0.25):
         self.logger.info("Starting move")
-        target_yaw = self.attitude[2] + yaw
+        if yaw is None:
+            target_yaw = None
+        else:
+            target_yaw = self.attitude[2] + yaw
         if use_gps:
             target_lat, target_long, target_amsl = relative_gps(self.position_global, offset)
-            waypoint = Waypoint(WayPointType.POS_GLOBAL, gps=[target_lat, target_long, target_amsl], yaw=target_yaw)
+            waypoint = Waypoint(WayPointType.POS_GLOBAL, gps=np.asarray([target_lat, target_long, target_amsl]), yaw=target_yaw)
         else:
             waypoint = Waypoint(WayPointType.POS_NED, pos=self.position_ned + offset, yaw=target_yaw)
         return await self.fly_to(waypoint=waypoint, put_into_offboard=True, tolerance=tolerance)
@@ -1382,7 +1400,7 @@ class DroneMAVSDK(Drone):
             gps = relative_gps(self.position_global, offset)
 
         # Send goto command
-        await self.system.action.goto_location(*gps, yaw)
+        await self._mavaction.goto_location(*gps, yaw)
 
         while True:
             # Check if we have arrived at target waypoint
@@ -1401,7 +1419,7 @@ class DroneMAVSDK(Drone):
         if not self.is_armed or not self.in_air:
             raise RuntimeError("Can't fly a landed or unarmed drone!")
         yaw_behaviour = OrbitYawBehavior.HOLD_FRONT_TO_CIRCLE_CENTER
-        await self._error_wrapper(self.system.action.do_orbit, ActionError, radius, velocity, yaw_behaviour,
+        await self._error_wrapper(self._mavaction.do_orbit, ActionError, radius, velocity, yaw_behaviour,
                                   center_lat, center_long, amsl)
 
     async def land(self):
@@ -1423,7 +1441,7 @@ class DroneMAVSDK(Drone):
             await self.change_flight_mode("offboard")
         update_freq = 2
         try:
-            await self.system.telemetry.set_rate_position_velocity_ned(self.position_update_rate)
+            await self._mavtelem.set_rate_position_velocity_ned(self.position_update_rate)
             update_freq = self.position_update_rate
         except Exception as e:
             self.logger.debug(f"Couldn't set message rate: {repr(e)}", exc_info=True)
@@ -1440,7 +1458,7 @@ class DroneMAVSDK(Drone):
         return True
 
     async def _land_using_landmode(self):
-        result = await self._error_wrapper(self.system.action.land, ActionError)
+        result = await self._error_wrapper(self._mavaction.land, ActionError)
         if isinstance(result, Exception):
             self.logger.warning("Couldn't go into land mode")
         while self.flightmode is not FlightMode.LAND:
@@ -1481,10 +1499,8 @@ class DroneMAVSDK(Drone):
                 await self.path_follower.deactivate()
             self.path_follower.close()
         # Cleanup other stuff that doesn't reliably get cleaned up otherwise
-        if self.system is not None:
-            self.system.__del__()
-        if self._server_process:
-            self._server_process.terminate()
+        if self._mavsdk is not None:
+            self._mavsdk.destroy()
         await super().stop_execution()
 
     async def stop(self):
@@ -1499,7 +1515,7 @@ class DroneMAVSDK(Drone):
         return True
 
     async def kill(self):
-        await self._error_wrapper(self.system.action.kill, ActionError)
+        await self._error_wrapper(self._mavaction.kill, ActionError)
         await super().kill()
         return True
 
