@@ -7,8 +7,8 @@ import requests
 import math
 from lxml import etree
 
-import mavsdk.camera
-from mavsdk.mavlink_direct import MavlinkMessage
+from mavsdk.asyncio.plugins.camera import CameraError
+from mavsdk.asyncio.plugins.mavlink_direct import MavlinkMessage
 
 import dronemanager.drone
 from dronemanager.plugin import Plugin
@@ -264,7 +264,7 @@ class Camera:
             return None
 
     async def _capture_info_updates(self):
-        async for capture_info in self.drone.system.camera.capture_info():
+        async for capture_info in self.dm.drones[self.drone_name]._mavcamera.subscribe_capture_info():
             self.logger.info(f"Capture update: Camera {capture_info.component_id} "
                              f"{'succeeded' if capture_info.is_success else 'failed'} with photo at "
                              f"{capture_info.time_utc_us}: {capture_info.file_url}")
@@ -324,8 +324,8 @@ class Camera:
     async def _error_wrapper(self, func, *args, **kwargs):
         try:
             res = await func(*args, **kwargs)
-        except mavsdk.camera.CameraError as e:
-            self.logger.error(f"CameraError: {e._result.result_str}")
+        except CameraError as e:
+            self.logger.error(f"CameraError: {e.result.name}")
             return False
         return res
 

@@ -21,9 +21,11 @@ from mavsdk.asyncio.plugins.telemetry import StatusTextType, TelemetryAsync
 from mavsdk.asyncio.plugins.action import ActionAsync, ActionError, OrbitYawBehavior
 from mavsdk.asyncio.plugins.offboard import PositionNedYaw, PositionGlobalYaw, VelocityNedYaw, AccelerationNed, OffboardError, \
     VelocityBodyYawspeed, OffboardAsync
-from mavsdk.asyncio.plugins.manual_control import ManualControlError
+from mavsdk.asyncio.plugins.manual_control import ManualControlError, ManualControlAsync
 from mavsdk.asyncio.plugins.mavlink_direct import MavlinkMessage, MavlinkDirectAsync
 from mavsdk.asyncio.plugins.param import ProtocolVersion, ParamAsync
+from mavsdk.asyncio.plugins.camera import CameraAsync
+from mavsdk.asyncio.plugins.gimbal import GimbalAsync
 
 from dronemanager.utils import dist_ned, dist_gps, relative_gps, coroutine_awaiter
 from dronemanager.utils import parse_address, COMMON_FORMATTER
@@ -596,6 +598,9 @@ class DroneMAVSDK(Drone):
         self._mavtelem: TelemetryAsync = None
         self._mavaction: ActionAsync = None
         self._mavoffboard: OffboardAsync = None
+        self._mavmanual: ManualControlAsync = None
+        self._mavcamera: CameraAsync = None
+        self._mavgimbal: GimbalAsync = None
 
         # How often (per second) we request position information from the drone. The same interval is used by path
         # planning algorithms for their time resolution.
@@ -715,6 +720,9 @@ class DroneMAVSDK(Drone):
                     self._mavtelem = TelemetryAsync(self.system)
                     self._mavaction = ActionAsync(self.system)
                     self._mavoffboard = OffboardAsync(self.system)
+                    self._mavmanual = ManualControlAsync(self.system)
+                    self._mavcamera = CameraAsync(self.system)
+                    self._mavgimbal = GimbalAsync(self.system)
 
                     self._running_tasks.add(asyncio.create_task(self._process_messages()))
                     self._get_drone_info()
@@ -1030,7 +1038,7 @@ class DroneMAVSDK(Drone):
     async def disarm(self):
         timeout = 5
         self.logger.info("Disarming!")
-        if self.path_follower.is_active:
+        if self.path_follower is not None and self.path_follower.is_active:
             await self.path_follower.deactivate()
         await super().disarm()
         result = await self._error_wrapper(self._mavaction.disarm, ActionError)
@@ -1136,10 +1144,10 @@ class DroneMAVSDK(Drone):
             result = await self._error_wrapper(self._mavaction.takeoff, ActionError)
             target_flight_mode = FlightMode.TAKEOFF
         elif flightmode == "position":
-            result = await self._error_wrapper(self.system.manual_control.start_position_control, ManualControlError)
+            result = await self._error_wrapper(self._mavmanual.start_position_control, ManualControlError)
             target_flight_mode = FlightMode.POSCTL
         elif flightmode == "altitude":
-            result = await self._error_wrapper(self.system.manual_control.start_altitude_control, ManualControlError)
+            result = await self._error_wrapper(self._mavmanual.start_altitude_control, ManualControlError)
             target_flight_mode = FlightMode.ALTCTL
         else:
             raise KeyError(f"{flightmode} is not a valid flightmode!")
@@ -1474,18 +1482,18 @@ class DroneMAVSDK(Drone):
         self.clear_queue()
         self.cancel_action()
         await self.path_follower.deactivate()
-        result = await self._error_wrapper(self.system.manual_control.start_position_control, ManualControlError)
+        result = await self._error_wrapper(self._mavmanual.start_position_control, ManualControlError)
         return result
 
     async def manual_control_altitude(self):
         self.clear_queue()
         self.cancel_action()
         await self.path_follower.deactivate()
-        result = await self._error_wrapper(self.system.manual_control.start_altitude_control, ManualControlError)
+        result = await self._error_wrapper(self._mavmanual.start_altitude_control, ManualControlError)
         return result
 
     async def set_manual_control_input(self, x, y, z, r):
-        result = await self._error_wrapper(self.system.manual_control.set_manual_control_input, ManualControlError, x, y, z, r)
+        result = await self._error_wrapper(self._mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
         return result
 
     async def stop_execution(self):
@@ -1523,6 +1531,6 @@ class DroneMAVSDK(Drone):
         try:
             await func(*args, **kwargs)
         except error_type as e:
-            self.logger.error(e._result.result_str)
+            self.logger.error(e.result.name)
             return False
         return True
