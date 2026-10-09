@@ -144,6 +144,10 @@ from DM to console.
 - `camera`: A plugin for controlling cameras connected to the drone FC. Quite specific for our camera and probably not generally applicable.
 - `sensor`: A plugin for managing generic extra data sources. We also have example code for a specific sensor: An Ecowitt weather station.
 - `scripts`: A plugin that allows executing arbitrary scripts from the terminal interface. They are executed in a separate process.
+- `parameters`: Save the parameters of a drone to a file, apply a parameter file to a drone (optionally verifying the
+  values after a reboot) and read or change single parameters. Calibration and tuning parameters are skipped by
+  default, so one file can configure a whole fleet. See the
+  [usage guide](https://dronemanager.readthedocs.io/en/latest/usage.html#managing-drone-parameters).
 - `optitrack`: A plugin using the python code from the NatNetSDK. Can be used to connect to a running motive server and
   forward tracking information to any connected drones. This also requires that motive be configured to stream the information and that
   the flight controller on the drones themselves be configured to use this information.

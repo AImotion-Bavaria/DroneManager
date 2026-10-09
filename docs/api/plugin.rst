@@ -87,6 +87,19 @@ Optitrack
    :show-inheritance:
 
 
+.. _parameters_plugin:
+
+Parameters
+^^^^^^^^^^
+
+See also the :ref:`usage guide <parameter_management>`.
+
+.. automodule:: dronemanager.plugins.parameters
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 Scripts
 ^^^^^^^
 

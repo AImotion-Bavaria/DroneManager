@@ -409,7 +409,7 @@ class InputMapping:
         action. In this case the arguments ``action_type`` and ``input_id`` are ignored.
 
         If the new action is a button action, ``input_id`` should be either an integer or ``None``.
-        If the new action is an axis action, ``input_id`` must be a list containing integers or ``None``s.
+        If the new action is an axis action, ``input_id`` must be a list containing integers or ``None`` values.
 
         Args:
             action_name: The name for the action.

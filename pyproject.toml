@@ -19,6 +19,7 @@ dependencies = [
     "rich",
     "mavsdk==3.17.*",
     "pymavlink",
+    "pyserial",
     "pygame-ce",
     "haversine",
     "scipy",
