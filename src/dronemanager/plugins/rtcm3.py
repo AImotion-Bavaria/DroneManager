@@ -54,8 +54,8 @@ class RTCM3Plugin(Plugin):
 
     async def start(self):
         await super().start()
-        if not self._running_tasks:
-            self._running_tasks.add(asyncio.create_task(self._port_lifecycle_manager()))
+        if not self.running_tasks:
+            self.running_tasks.add(asyncio.create_task(self._port_lifecycle_manager()))
 
     async def shutdown(self):
         """Explicit shutdown hook called by DroneManager framework (if supported)."""
@@ -315,6 +315,10 @@ class RTCM3Plugin(Plugin):
             return True
         self.logger.warning(f"Drone '{name}' was not found.")
         return False
+
+    async def status(self):
+        """Log RTCM3 stream health."""
+        await self.get_status()
 
     async def get_status(self):
         """Inspect RTCM3 stream health."""

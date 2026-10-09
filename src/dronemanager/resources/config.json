@@ -9,8 +9,80 @@
   ],
   "plugin_settings": {
     "controllers": {
-      "auto_set": true,
-      "auto_drone": true
+      "auto_assign": true,
+      "default_mappings": {
+        "PS4 Controller": "PS4 Controller"
+      },
+      "mappings": {
+        "PS4 Controller": {
+          "name": "PS4 Controller",
+          "axes_labels": [
+            [1, "Left stick right"],
+            [2, "Left stick down"],
+            [3, "Right stick right"],
+            [4, "Right stick down"],
+            [5, "Left trigger"],
+            [6, "Right trigger"]
+          ],
+          "button_labels": [
+            [1, "Cross"],
+            [2, "Circle"],
+            [3, "Square"],
+            [4, "Triangle"],
+            [5, "Share button"],
+            [6, "Playstation button"],
+            [7, "Options button"],
+            [8, "Left stick press"],
+            [9, "Right stick press"],
+            [10, "Left bumper"],
+            [11, "Right bumper"],
+            [12, "D-Pad Up"],
+            [13, "D-Pad Down"],
+            [14, "D-Pad Left"],
+            [15, "D-Pad Right"],
+            [16, "Touch pad press"]
+          ],
+          "hold_duration": 2,
+          "actions": {
+            "Thrust": {
+              "input_type": "Axis",
+              "input_id": 2
+            },
+            "Yaw": {
+              "input_type": "Axis",
+              "input_id": 1
+            },
+            "Forward": {
+              "input_type": "Axis",
+              "input_id": -4
+            },
+            "Right": {
+              "input_type": "Axis",
+              "input_id": 3
+            },
+            "Control": {
+              "input_type": "Button",
+              "input_id": -6
+            },
+            "Arm": {
+              "input_type": "Button",
+              "input_id": 1
+            },
+            "Disarm": {
+              "input_type": "Button",
+              "input_id": 2
+            },
+            "Takeoff": {
+              "input_type": "Button",
+              "input_id": 12
+            },
+            "Land": {
+              "input_type": "Button",
+              "input_id": 13
+            }
+          }
+        }
+      }
     },
     "external": {
       "server_port": 31659,
@@ -21,7 +93,8 @@
     "optitrack": {
       "server_ip": "127.0.0.1",
       "local_ip": "127.0.0.1",
-      "axes": ["z", "-x", "-y"],
+      "world_axes": ["x", "z", "-y"],
+      "body_axes": ["x", "z", "-y"],
       "log_frames": false
     },
     "rtcm3": {

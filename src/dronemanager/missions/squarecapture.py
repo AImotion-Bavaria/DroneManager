@@ -801,7 +801,7 @@ class SquareCaptureMission(Mission):
         self._flight_task = asyncio.create_task(
             self._sortie(session, side, altitude, scans, settle, exposure,
                          gain, gate, stations_ned, headings_fn, fly, meta))
-        self._running_tasks.add(self._flight_task)
+        self.running_tasks.add(self._flight_task)
 
     async def _sortie(self, session, side, altitude, scans, settle, exposure,
                       gain, gate, stations_ned, headings_fn, fly, meta=None):

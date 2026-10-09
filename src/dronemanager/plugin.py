@@ -1,18 +1,20 @@
-""" Class for extra, loadable plugins.
+"""Class for extra, loadable plugins.
 
 Plugins extend the functionality of DroneManager or Drone Classes by providing extra functions. They can also register
 their own commands to the CLI.
 """
 import abc
 import asyncio
-from collections.abc import Coroutine
+from concurrent.futures import Future
 import importlib.util
 import inspect
+import logging
 import pathlib
 import sys
+from typing import Callable, Coroutine
 
 import dronemanager.core
-from dronemanager.utils import DM_INSTALL_DIR, SRC_DIR
+from dronemanager.utils import DOC_DIR, SRC_DIR, cancel_running_tasks
 
 
 # TODO: Figure out scheduling
@@ -27,9 +29,13 @@ class Plugin(abc.ABC):
     populate their interfaces. This is a dictionary with coroutines as values and human-readable names as keys. In
     DroneManager the names are used together with the class prefix to determine the command input on the command line,
     while the signature of the function is used to populate the CLI parser.
-    The attribute :py:attr:`background_functions` should list coroutines that will run indefinitely, for example those
-    polling for status updates from a camera. They will be started during construction of the class object, usually
-    when the module is loaded. Note that these must be coroutines.
+
+    The attribute :py:attr:`background_functions` should list coroutines that will be launched during initialization
+    and run indefinitely, for example those polling for status updates from a camera. They will be started during
+    construction of the class object, usually when the module is loaded. Note that these must be coroutines.
+
+    The attribute :py:attr:`running_tasks` keeps track of any awaitables, such as tasks, currently running. These are
+    cancelled automatically when the plugin is closed.
 
     There is a basic dependency structure for plugins. The attribute :py:attr:`~dronemanager.plugin.Plugin.DEPENDENCIES`
     can be used to list other plugins by their names, on which this plugin depends. These are loaded before this one is.
@@ -38,15 +44,6 @@ class Plugin(abc.ABC):
 
     A common kwarg is "name", for plugins of which multiple copies may be loaded, in which case the name acts as the
     unique identifier.
-
-    Attributes:
-        dm (dronemanager.core.DroneManager): The DroneManager instance connected to this plugin.
-        logger (logging.Logger): The parent logger. A child logger with the name of the class is created below this.
-        name (str): The name for this instance of the plugin.
-        cli_commands (dict[str, Callable]): A dictionary with input strings as keys and the associated coroutines as
-          values. The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``.
-        background_functions (list[Coroutine]): A list with coroutines which will be launched automatically once the
-          plugin has loaded. These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``.
     """
 
     PREFIX: str = "abc"
@@ -54,28 +51,57 @@ class Plugin(abc.ABC):
     DEPENDENCIES: list[str] = []
     """(class attribute) Other plugins that this plugin depends on."""
 
-    def __init__(self, dm, logger, name, *args, **kwargs):
-        self.dm = dm
-        self.logger = logger.getChild(self.__class__.__name__)
-        self.name = name
-        self.cli_commands = {}
-        self.background_functions = []
-        self._running_tasks = set()
+    def __init__(self, dm: "dronemanager.core.DroneManager", logger: logging.Logger, name: str, *args, make_child_logger: bool = True, **kwargs):
+        """
+
+        Args:
+            dm:
+            logger:
+            name:
+            *args:
+            **kwargs:
+        """
+        self.dm: "dronemanager.core.DroneManager" = dm
+        """The DroneManager instance connected to this plugin."""
+        if make_child_logger:
+            self.logger: logging.Logger = logger.getChild(self.__class__.__name__)
+        else:
+            self.logger = logger
+        """The parent logger. A child logger with the name of the class is created below this."""
+        self.name: str = name
+        """The name for this instance of the plugin."""
+        self.cli_commands: dict[str, Callable] = {}
+        """A dictionary with input strings as keys and the associated coroutines as
+           values. The coroutine should be bare, i.e. ``coro`` instead of ``coro(args)``."""
+        self.background_functions: list[Coroutine] = []
+        """A list with coroutines which will be launched automatically once the
+           plugin has loaded. These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``."""
+        self.running_tasks: set[Future | asyncio.Future] = set()
+        """A set of awaitables currently running. These are automatically cancelled if the plugin is closed."""
 
     def start_background_functions(self):
+        """Starts declared background functions and tracks them."""
         for coro in self.background_functions:
-            self._running_tasks.add(asyncio.create_task(coro))
+            self.running_tasks.add(asyncio.create_task(coro))
 
     async def start(self):
-        """ Starts any background functions."""
+        """Starts the plugin.
+
+        By default, only starts declared background functions.
+        """
         self.start_background_functions()
 
     async def close(self):
-        """ Ends all running tasks functions."""
-        while len(self._running_tasks) > 0:
-            task = self._running_tasks.pop()
-            if isinstance(task, asyncio.Task):
-                task.cancel()
+        """Close the plugin.
+
+        By default, stops any running functions.
+        """
+        cancel_running_tasks(self.running_tasks)
+
+    @abc.abstractmethod
+    async def status(self):
+        """Log status information about the plugin and its attributes."""
+        raise NotImplementedError
 
 
 class MetaPlugin(Plugin, abc.ABC):
@@ -101,9 +127,9 @@ class MetaPlugin(Plugin, abc.ABC):
     ON_LOAD_COROS = set()
     ON_UNLOAD_COROS = set()
 
-    def __init__(self, dm: "dronemanager.core.DroneManager", logger, name, *args, **kwargs):
-        super().__init__(dm, logger, name, *args, **kwargs)
-        self._loaded = set()
+    def __init__(self, dm: "dronemanager.core.DroneManager", logger, name, *args, make_child_logger: bool = True, **kwargs):
+        super().__init__(dm, logger, name, *args, make_child_logger = make_child_logger, **kwargs)
+        self._loaded: dict[str, Plugin] = {}
         self._first_time_setup()
 
     @property
@@ -210,7 +236,7 @@ class MetaPlugin(Plugin, abc.ABC):
                     kwargs = {}
                 plugin = plugin_class(self.dm, self.logger, name, **kwargs)
                 setattr(self.dm, name, plugin)
-                self._loaded.add(name)
+                self._loaded[name] = plugin
                 await plugin.start()
             except Exception as e:
                 self.logger.error(f"Couldn't load plugin {name} due to an exception: {repr(e)}!")
@@ -220,7 +246,7 @@ class MetaPlugin(Plugin, abc.ABC):
                 if hasattr(self.dm, name):
                     delattr(self.dm, name)
                 if name in self._loaded:
-                    self._loaded.remove(name)
+                    self._loaded.pop(name)
                 return False
             self.logger.debug(f"Performing callbacks for plugin loading...")
             for func in self.ON_LOAD_COROS:
@@ -237,9 +263,7 @@ class MetaPlugin(Plugin, abc.ABC):
             self.logger.warning(f"No loaded plugin named {name}!")
             return False
         self.logger.info(f"Unloading plugin {name}")
-        self._loaded.remove(name)
-        plugin = getattr(self.dm, name)
-        self.logger.debug(f"Attr object{plugin}")
+        plugin = self._loaded.pop(name)
         unload_tasks = set()
         for func in self.ON_UNLOAD_COROS:
             unload_tasks.add(func(name, plugin))
@@ -254,34 +278,35 @@ class MetaPlugin(Plugin, abc.ABC):
 
     async def close(self):
         while len(self._loaded) > 0:
-            plugin = self._loaded.pop()
-            self._loaded.add(plugin)
-            await self.unload(plugin)
+            for name in list(self._loaded.keys()):
+                await self.unload(name)
         await super().close()
 
 
 class PluginLoader(MetaPlugin):
+    """Core plugin loader.
+
+    Does not offer any CLI commands as those are covered by the app directly.
+    """
 
     EXAMPLE_DIR: pathlib.Path = SRC_DIR.joinpath("plugins")
     """Directory in the source tree with shipped components."""
 
-    USER_DIR: pathlib.Path = DM_INSTALL_DIR.joinpath("plugins")
+    USER_DIR: pathlib.Path = DOC_DIR.joinpath("plugins")
     """Directory in the DroneManager install directory where new sub-plugins should be located."""
 
     VALID_CLASS_SUFFIX: str = "Plugin"
-    """Valid sub-plugins must have class names ending with this string.
-
-    :meta hide-value:"""
+    """Valid sub-plugins must have class names ending with this string."""
 
     NAMESPACE: str = "plugins"
-    """Modules with subplugins have this prepended to their import to reduce collisions.
-
-    :meta hide-value:"""
+    """Modules with subplugins have this prepended to their import to reduce collisions."""
 
     SUBTYPE: type = Plugin
-    """The type that subplugins must subclass to be valid.
+    """The type that subplugins must subclass to be valid."""
 
-    :meta hide-value:"""
+    def __init__(self, dm: "dronemanager.core.DroneManager", logger, name, *args, **kwargs):
+        super().__init__(dm, logger, name, *args, make_child_logger=False, **kwargs)
 
     async def status(self):
+        """Dummy implementation."""
         pass

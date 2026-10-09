@@ -216,8 +216,8 @@ We use Google-style docstrings. Most IDEs can be set up to configure which style
 Type hints for function arguments go into the signature, not the docstring.
 
 For classes, everything goes into the class docstring, except the arguments for ``__init__``, which go into
-the ``__init__`` docstring. Class attributes must be type hinted ONLY in the docstring, otherwise builds will fail with
-duplicate entry errors.
+the ``__init__`` docstring. Class and instance attributes must be documented inline and classes should not have an
+"Attributes:" section to avoid build errors.
 
 Sphinx uses the class hierarchy to try and find a docstring when a class overrides a member of its parent class. This
 can lead to errors when the docstring of the parent class doesn't meet the formatting standards. In this case, the

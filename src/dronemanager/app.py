@@ -1,34 +1,45 @@
+import argparse
 import asyncio
 from collections.abc import Callable
 import datetime
 import inspect
 import os
+import pathlib
+import re
 import shlex
-import sys
 import types
 import typing
 
 import dronemanager
 from dronemanager.core import DroneManager
 from dronemanager.drone import Drone, DroneMAVSDK
-from dronemanager.utils import COMMON_FORMATTER, coroutine_awaiter, LOG_DIR, CONFIG_FILE
+from dronemanager.utils import COMMON_FORMATTER, coroutine_awaiter, \
+    LOG_DIR, get_config
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 
 import textual.css.query
 from textual import on, events
 from textual.app import App, Screen, Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, Header, Log, Static, RadioSet, RadioButton, ProgressBar
 from textual.widget import Widget
+from textual.widgets import Footer, Header, Log, Static, RadioSet, \
+    RadioButton, ProgressBar
 
-from dronemanager.widgets import InputWithHistory, TextualLogHandler, DroneOverview, RTCM3Status, ArgParser, ArgumentParserError, \
+from dronemanager.widgets import InputWithHistory, TextualLogHandler, \
+    DroneOverview, RTCM3Status, ArgParser, ArgumentParserError, \
     PrintHelpInsteadOfParsingError
 
 import logging
 
 # TODO: Fence, path generator and path follower managing somehow
 
-pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s - %(message)s', datefmt="%H:%M:%S")
+class LastNameElementFilter(logging.Filter):
+    def filter(self, record):
+        record.name_last = record.name.rsplit('.', 1)[-1]
+        return True
+
+pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name_last)s '
+                                   '- %(message)s', datefmt="%H:%M:%S")
 
 
 UPDATE_RATE = 20  # How often the various screens update in Hz.
@@ -36,11 +47,11 @@ BENCHMARKING = False
 
 
 class StatusScreen(Screen):
-    """ A screen showing detailed information for a single drone.
+    """A screen showing detailed information for a single drone.
 
     """
 
-    CSS = """ 
+    CSS = """
 ProgressBar {
     width: 25;
     height: 1;
@@ -81,12 +92,12 @@ Bar {
             except textual.app.NoMatches:
                 pass
             except Exception as e:
-                self.logger.error(f"Error updating values.")
+                self.logger.error("Error updating values.")
                 self.logger.debug({repr(e)}, exc_info=True)
             await asyncio.sleep(1/UPDATE_RATE)
 
     def compose(self):
-        """ Creates the screen object
+        """Creates the screen object
         """
         with Horizontal():
             with RadioSet(id="droneselector"):
@@ -153,7 +164,6 @@ class CommandScreen(Screen):
         super().__init__(*args, **kwargs)
         self.dm: DroneManager = self.app.dm
         self.drone_widgets: dict[str, Widget] = {}
-        self.running_tasks: set[asyncio.Task] = set()
         # self.drones acts as the list/manager of connected drones, any function that writes or deletes items should
         # protect those writes/deletes with this lock. Read only functions can ignore it.
         self._kill_counter = 0  # Require kill all to be entered twice
@@ -177,14 +187,12 @@ class CommandScreen(Screen):
 
         asyncio.create_task(self._default_plugin_loading())
 
-        self._awaiter_tasks = set()
-
     async def _default_plugin_loading(self):
         plugin_tasks = []
         for plugin_name in self.dm.config.default_plugins:
             plugin_tasks.append(asyncio.create_task(self.dm.load(plugin_name)))
         await asyncio.gather(*plugin_tasks)
-        self.logger.info(f"Loaded startup plugins: {self.dm.plugins}")
+        self.logger.info(f"Loaded startup plugins: {self.dm.plugins.keys}")
 
     def _base_parser(self):
         parser = ArgParser(logger = self.logger, description="Interactive command line interface to connect and control multiple drones")
@@ -338,6 +346,7 @@ class CommandScreen(Screen):
 
         log_parser = command_parsers.add_parser("logs", help="Prints the log directory", logger=self.logger)
         config_parser = command_parsers.add_parser("config", help="Print the config directory", logger=self.logger)
+        config_parser.add_argument("--save", action="store_true", help="Saves the current config if set.")
 
         return parser, command_parsers
 
@@ -354,29 +363,7 @@ class CommandScreen(Screen):
                 command = commands[command_name]
                 cli_command = f"{plugin.PREFIX}-{command_name}".lower()
                 self.logger.debug(f"Inspecting command {command_name}")
-                doc_str = inspect.getdoc(command)
-                if doc_str is not None:
-                    help_string = doc_str.split("\n")[0]
-                else:
-                    help_string = "No doc string for this function!"
-                tmp_parser = self.command_parser.add_parser(cli_command, help=help_string, logger = self.logger)
-                for arg in check_cli_command_signatures(command):
-                    is_invalid, name, is_list, is_required, accepts_none, base_type, is_kwonly, has_default, default = arg
-                    arg_name = name if is_required else f"--{name}"
-                    arg_kwargs = {
-                        "type": base_type,
-                    }
-                    if is_invalid:
-                        raise RuntimeError(f"CLI command {command_name} has invalid parameter types for parameter {name}!")
-                    if is_list and is_required:
-                        arg_kwargs["nargs"] = "+"
-                    elif is_list and not is_required:
-                        arg_kwargs["nargs"] = "*"
-                    if has_default:
-                        arg_kwargs["default"] = default
-                    tmp_parser.add_argument(arg_name, **arg_kwargs)
-                    # TODO: Add help to argument from parameters in doc string
-                    self.logger.debug(f"Added Argument {arg_name}: {base_type, is_list, is_required}")
+                add_cli_command_parser(self.command_parser, cli_command, command, logger=self.logger)
                 self.dynamic_commands[cli_command] = command
             return True
         except Exception as e:
@@ -426,6 +413,7 @@ class CommandScreen(Screen):
         self.logger.debug(f"Adding log pane handlers to {name}")
         drone_handler = TextualLogHandler(output)
         drone_handler.setLevel(logging.INFO)
+        drone_handler.addFilter(LastNameElementFilter())
         drone_handler.setFormatter(pane_formatter)
         drone.add_handler(drone_handler)
         self.logger.debug(f"Adding overview widget for {name}")
@@ -436,6 +424,7 @@ class CommandScreen(Screen):
     async def _remove_drone_object(self, name):
         try:
             await self.drone_widgets[name].remove()
+            self.drone_widgets.pop(name)
         except KeyError:
             pass
 
@@ -549,7 +538,7 @@ class CommandScreen(Screen):
                 elif command == "unload":
                     tmp = asyncio.create_task(self.dm.unload_plugin(args.plugin))
                 elif command == "loaded":
-                    self.logger.info(f"Currently loaded plugins: {self.dm.plugins}")
+                    self.logger.info(f"Currently loaded plugins: {self.dm.plugins.keys()}")
                 elif command == "plugins":
                     available_but_not_loaded = [item for item in self.dm.plugin_options
                                                 if item not in self.dm.plugins]
@@ -564,9 +553,12 @@ class CommandScreen(Screen):
                 elif command == "logs":
                     self.logger.info(LOG_DIR)
                 elif command == "config":
-                    self.logger.info(CONFIG_FILE)
-                self.running_tasks.add(tmp)
-                self._awaiter_tasks.add(asyncio.create_task(coroutine_awaiter(tmp, self.logger)))
+                    if args.save:
+                        self.dm.save_config()
+                    else:
+                        self.logger.info(get_config())
+                self.app.running_tasks.add(tmp)
+                self.app._awaiter_tasks.add(asyncio.create_task(coroutine_awaiter(tmp, self.logger)))
         except Exception as e:
             self.logger.error("Encountered an exception executing the CLI!")
             self.logger.debug(repr(e), exc_info=True)
@@ -586,23 +578,14 @@ class CommandScreen(Screen):
             await self.exit()
 
     async def exit(self):
-        """ Checks if any drones are armed and exits the app if not."""
+        """Checks if any drones are armed and exits the app if not."""
         stop_app = True
         try:
             for name in self.dm.drones:
                 if self.dm.drones[name].is_armed:
                     stop_app = False
             if stop_app:
-                for task in self.running_tasks:
-                    if isinstance(task, asyncio.Task):
-                        task.cancel()
-                for task in self._awaiter_tasks:
-                    if isinstance(task, asyncio.Task):
-                        task.cancel()
-                await asyncio.sleep(0.2)  # Beauty pause
-                self.logger.info("Exiting...")
-                await self.dm.close()
-                await asyncio.sleep(1)  # Beauty pause
+                await self.app._close()
                 self.app.exit()
             else:
                 self.logger.warning("Can't exit the app with armed drones!")
@@ -622,16 +605,17 @@ class CommandScreen(Screen):
                 await asyncio.sleep(0.1)
         handler = TextualLogHandler(output)
         handler.setLevel(logging.INFO)
+        handler.addFilter(LastNameElementFilter())
         handler.setFormatter(pane_formatter)
         self.logger.addHandler(handler)
-        self.dm.logger.addHandler(handler)
+        self.app.logging_handlers.append(handler)
 
     def _on_mount(self, event: events.Mount) -> None:
         super()._on_mount(event)
         self.query_one("#output", expect_type=Log).can_focus = False
 
     def compose(self):
-        """ Creates the screen object
+        """Creates the screen object
         """
         status_string = ""
         status_string += "Drone Status\n" + DroneOverview.header_string()
@@ -679,6 +663,7 @@ class DroneApp(App):
     def __init__(self, dm: DroneManager, logger=None, smoke_test = False):
         self.dm = dm
         self.smoke_test = smoke_test
+        self.logging_handlers = []
         if logger is None:
             self.logger = logging.getLogger("App")
             self.logger.setLevel(logging.DEBUG)
@@ -689,20 +674,46 @@ class DroneApp(App):
             file_handler = logging.FileHandler(os.path.join(logdir, filename))
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.append(file_handler)
             self.logger.addHandler(file_handler)
         else:
             self.logger = logger
-        self.command_screen: CommandScreen | None = None
-        self.status_screen: StatusScreen | None = None
+
+        self.running_tasks: set[asyncio.Task] = set()
+        self._awaiter_tasks = set()
+
         super().__init__()
 
     def on_mount(self):
         self.switch_mode("control")
         if self.smoke_test:
-            self.set_timer(30, self._smoke_test_end)
+            self.set_timer(10, self._smoke_test_end)
 
     def _smoke_test_end(self):
-        asyncio.create_task(self.screen.exit())
+        self.exit()
+
+    async def on_unmount(self):
+        self._remove_handlers()
+        await self._close()
+
+    def _remove_handlers(self):
+        for handler in self.logging_handlers:
+            self.logger.removeHandler(handler)
+            handler.close()
+
+    async def _close(self):
+        for task in self.running_tasks:
+            if isinstance(task, asyncio.Task):
+                task.cancel()
+        for task in self._awaiter_tasks:
+            if isinstance(task, asyncio.Task):
+                task.cancel()
+        await asyncio.sleep(0.2)  # Beauty pause
+        self.logger.info("Exiting...")
+        await self.dm.close()
+        await asyncio.sleep(1)  # Beauty pause
+        for handler in self.logger.handlers:
+            self.logger.removeHandler(handler)
 
     def action_cycle_control(self):
         self.logger.debug("Switching between control and status screens")
@@ -717,7 +728,7 @@ class DroneApp(App):
 
 
 def check_cli_command_signatures(command: Callable) -> list[tuple]:
-    """ Inspects a function signature to determine the type of the arguments, if they are optional, etc.
+    """Inspects a function signature to determine the type of the arguments, if they are optional, etc.
 
     Returns a tuple for each argument. Each tuple contains:
 
@@ -817,6 +828,126 @@ def check_cli_command_signatures(command: Callable) -> list[tuple]:
     return list(zip(args_invalid, args_name, args_list, args_required, args_accepts_none, args_types, args_kwonly, args_has_defaults, args_defaults))
 
 
+_DOCSTRING_SECTIONS = {"Args", "Arguments", "Parameters", "Returns", "Return", "Raises", "Yields", "Example",
+                       "Examples", "Note", "Notes", "Attributes"}
+
+
+def parse_docstring_args(doc_str: str) -> dict[str, str]:
+    """Extracts the argument descriptions from the "Args:" section of a Google style doc string.
+
+    Descriptions spanning multiple lines are joined into one line.
+
+    Args:
+        doc_str: The cleaned doc string, i.e. from :py:func:`inspect.getdoc`.
+
+    Returns:
+        A dictionary with the argument names as keys and their descriptions as values.
+    """
+    arg_helps = {}
+    in_args = False
+    section_indent = 0
+    entry_indent = None
+    current = None
+    for line in doc_str.splitlines():
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if not in_args:
+            if stripped in ("Args:", "Arguments:"):
+                in_args = True
+                section_indent = indent
+            continue
+        if not stripped:
+            continue
+        if indent <= section_indent:
+            break
+        if entry_indent is None:
+            entry_indent = indent
+        if indent == entry_indent:
+            match = re.match(r"^\**(\w+)\s*(?:\([^)]*\))?\s*:\s*(.*)$", stripped)
+            if match:
+                current = match.group(1)
+                arg_helps[current] = match.group(2)
+                continue
+        if current is not None:
+            arg_helps[current] += " " + stripped
+    return {name: text.strip() for name, text in arg_helps.items()}
+
+
+def _docstring_description(doc_str: str) -> str:
+    """Get the doc string up to the first section header such as "Args:".
+
+    Args:
+        doc_str: The cleaned doc string.
+
+    Returns:
+        The summary and description part of the doc string.
+    """
+    lines = []
+    for line in doc_str.splitlines():
+        if line.strip().rstrip(":") in _DOCSTRING_SECTIONS and line.strip().endswith(":"):
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def add_cli_command_parser(command_parsers: argparse._SubParsersAction, cli_command: str, command: Callable,
+                           **parser_kwargs) -> argparse.ArgumentParser:
+    """Adds a parser for a plugin command, using the signature and doc string of the command.
+
+    The first line of the doc string is used as the short help in the command list, the doc string up to the first
+    section as the description for ``<command> -h`` and the "Args:" section for the help of each argument. Boolean
+    arguments with a default of ``False`` become flags, i.e. ``--verify`` instead of ``--verify True``.
+
+    Args:
+        command_parsers: The subparsers object to add the parser to.
+        cli_command: The name of the command on the command line.
+        command: The coroutine function executed for this command.
+        **parser_kwargs: Passed on to ``add_parser``.
+
+    Returns:
+        The new parser.
+
+    Raises:
+        RuntimeError: If the signature of the command contains types that can't be parsed.
+    """
+    doc_str = inspect.getdoc(command)
+    if doc_str is not None:
+        help_string = doc_str.split("\n")[0]
+        description = _docstring_description(doc_str)
+        arg_helps = parse_docstring_args(doc_str)
+    else:
+        help_string = "No doc string for this function!"
+        description = None
+        arg_helps = {}
+    if description:
+        description = description.replace("%", "%%")
+    parser = command_parsers.add_parser(cli_command, help=help_string.replace("%", "%%"), description=description,
+                                        **parser_kwargs)
+    for arg in check_cli_command_signatures(command):
+        is_invalid, name, is_list, is_required, accepts_none, base_type, is_kwonly, has_default, default = arg
+        if is_invalid:
+            raise RuntimeError(f"CLI command {cli_command} has invalid parameter types for parameter {name}!")
+        arg_name = name if is_required else f"--{name}"
+        arg_help = arg_helps.get(name, "")
+        arg_kwargs = {}
+        if base_type is bool and not is_list and has_default and default is False:
+            arg_kwargs["action"] = "store_true"
+        else:
+            arg_kwargs["type"] = base_type
+            if is_list and is_required:
+                arg_kwargs["nargs"] = "+"
+            elif is_list and not is_required:
+                arg_kwargs["nargs"] = "*"
+            if has_default:
+                arg_kwargs["default"] = default
+                if default is not None:
+                    arg_help = f"{arg_help} Default: {default}".strip()
+        if arg_help:
+            arg_kwargs["help"] = arg_help.replace("%", "%%")
+        parser.add_argument(arg_name, **arg_kwargs)
+    return parser
+
+
 def main():
     if BENCHMARKING:
         from multiprocessing import Event, Process
@@ -858,16 +989,21 @@ def main():
         drone_manager = DroneManager(drone_type, log_to_console=False)
         app = DroneApp(drone_manager, logger=drone_manager.logger)
         app.run()
-        logging.shutdown()
         stop_cpu_checker.set()
         profile_process.join()
     else:
-        smoke_test = "--smoke-test" in sys.argv
+        script_parser = argparse.ArgumentParser()
+        script_parser.add_argument("--config", type=str, help="Path to the config file.", required=False)
+        args = script_parser.parse_args()
+
+        if args.config is not None:
+            dronemanager.utils._CONFIG_FILE = pathlib.Path(args.config)
+            print("Using non-standard config location.")
+
         drone_type = DroneMAVSDK
         drone_manager = DroneManager(drone_type, log_to_console=False)
-        app = DroneApp(drone_manager, logger=drone_manager.logger, smoke_test=smoke_test)
+        app = DroneApp(drone_manager, logger=drone_manager.logger)
         app.run()
-        logging.shutdown()
 
 
 if __name__ == "__main__":

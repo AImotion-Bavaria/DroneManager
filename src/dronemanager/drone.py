@@ -4,9 +4,8 @@ from collections import deque
 import math
 import os.path
 import threading
-import platform
 import time
-from subprocess import Popen, DEVNULL
+from subprocess import Popen
 from abc import ABC, abstractmethod
 from typing import Coroutine
 
@@ -20,6 +19,7 @@ from mavsdk.action import ActionError, OrbitYawBehavior
 from mavsdk.offboard import PositionNedYaw, PositionGlobalYaw, VelocityNedYaw, AccelerationNed, OffboardError, \
     VelocityBodyYawspeed
 from mavsdk.manual_control import ManualControlError
+from mavsdk.mocap import VisionPositionEstimate, PositionBody, AngleBody, MocapError, Covariance
 
 from dronemanager.utils import dist_ned, dist_gps, relative_gps, coroutine_awaiter
 from dronemanager.utils import parse_address, COMMON_FORMATTER, get_free_port
@@ -62,7 +62,7 @@ class Battery:
 
 
 class DroneConfig:
-    """ Convenience class for drone configurations.
+    """Convenience class for drone configurations.
 
     These exist for convenience purposes, to allow people to define drone objects with fixed parameters for easy reuse.
     They can be saved to and loaded from files. A given configuration is used when dm.connect_to_drone is called with
@@ -186,8 +186,11 @@ class Drone(ABC, threading.Thread):
         self.is_paused = False
         self.mav_conn: MAVPassthrough | None = None
         self.drone_params: DroneParams | None = None
+
+        self.running_tasks = set()
+
         self.start()
-        asyncio.create_task(self._task_scheduler())
+        self.running_tasks.add(asyncio.create_task(self._task_scheduler()))
 
     def run(self):
         while not self.should_stop:
@@ -232,26 +235,27 @@ class Drone(ABC, threading.Thread):
 
     @abstractmethod
     async def stop_execution(self):
-        """ Stops the thread. This function should be called at the end of any implementing function.
+        """Stops the thread. This function should be called at the end of any implementing function.
 
         :return:
         """
         self.should_stop.set()
 
     def pause(self):
-        """ Pause task execution by setting self.is_paused to True.
+        """Pause task execution by setting self.is_paused to True.
 
         Note that it is not possible to "pause" what the drone is doing in a general way. What "pausing" a task does or
         if a task can even be paused depends on the specific task and implementation. Subclasses must define and
         implement this behaviour themselves.
         However, pausing is always possible between tasks, and this is the default behaviour for subclasses that do not
         implement any of their own: When paused, drones will finish their current task and then wait until unpaused
-        before beginning the next task."""
+        before beginning the next task.
+        """
         self.is_paused = True
         self.logger.debug("Pausing...")
 
     def resume(self):
-        """ Resume executing tasks. """
+        """Resume executing tasks."""
         self.is_paused = False
         self.logger.debug("Resuming...")
 
@@ -287,9 +291,7 @@ class Drone(ABC, threading.Thread):
     @property
     @abstractmethod
     def position_global(self) -> np.ndarray:
-        """
-
-        :return: Array with the GPS coordinates [latitude, longitude, AMSL]
+        """:return: Array with the GPS coordinates [latitude, longitude, AMSL]
         """
         pass
 
@@ -311,7 +313,7 @@ class Drone(ABC, threading.Thread):
     @property
     @abstractmethod
     def attitude(self) -> np.ndarray:
-        """ RPY in degrees"""
+        """RPY in degrees"""
         pass
 
     @property
@@ -345,7 +347,7 @@ class Drone(ABC, threading.Thread):
 
     @abstractmethod
     async def takeoff(self, altitude=2.0, allow_in_air=False) -> bool:
-        """ Takes off to the specified altitude above current position.
+        """Takes off to the specified altitude above current position.
 
         Note that altitude is positive.
 
@@ -359,7 +361,7 @@ class Drone(ABC, threading.Thread):
         pass
 
     def is_at_waypoint(self, waypoint: Waypoint, pos_tolerance=0.25, vel_tolerance=0.1, yaw_tolerance=1) -> bool:
-        """ Definition of "is at" depends on the waypoint type. At most checks position, yaw and
+        """Definition of "is at" depends on the waypoint type. At most checks position, yaw and
         velocity.
 
         :param waypoint:
@@ -387,9 +389,7 @@ class Drone(ABC, threading.Thread):
             raise ValueError("Invalid waypoint type for this function")
 
     def is_at_pos(self, target_pos, tolerance=0.25) -> bool:
-        """
-
-        :param target_pos: Array with target position. If a yaw is also passed (i.e. array length 4), it is ignored.
+        """:param target_pos: Array with target position. If a yaw is also passed (i.e. array length 4), it is ignored.
         :param tolerance: How close we have to be to the target position to be considered "at" it.
         :return:
         """
@@ -420,7 +420,7 @@ class Drone(ABC, threading.Thread):
         self.fence = fence_type(self.logger, *args, **kwargs)
 
     def check_waypoint(self, waypoint: "Waypoint"):
-        """ Check if a waypoint is valid and within any geofence (if such a fence is set)"""
+        """Check if a waypoint is valid and within any geofence (if such a fence is set)"""
         try:
             waypoint_valid = not self.fence or (self.fence and self.fence.check_waypoint_compatible(waypoint))
         except Exception as e:
@@ -433,15 +433,16 @@ class Drone(ABC, threading.Thread):
         pass
 
     async def wait(self, delay: float):
-        """ Wait delay seconds.
+        """Wait delay seconds.
 
-        This function is useful with scheduling to schedule short waits between moves."""
+        This function is useful with scheduling to schedule short waits between moves.
+        """
         await asyncio.sleep(delay)
 
     @abstractmethod
     async def fly_to(self, local: np.ndarray | None = None, gps: np.ndarray | None = None, yaw: float | None = None,
                      waypoint: Waypoint | None = None, tolerance=0.25):
-        """ Fly to the specified position.
+        """Fly to the specified position.
 
         :param local:
         :param gps:
@@ -454,7 +455,7 @@ class Drone(ABC, threading.Thread):
 
     @abstractmethod
     async def move(self, offset: np.ndarray, yaw: float | None = None, use_gps=True, tolerance=0.25):
-        """ Move from the current position by the specified distances.
+        """Move from the current position by the specified distances.
 
         :param offset: A numpy array with the information how much to move along each axis in meters.
         :param yaw:
@@ -480,8 +481,17 @@ class Drone(ABC, threading.Thread):
     async def kill(self) -> bool:
         pass
 
+    @abstractmethod
+    async def set_manual_control_input(self, x, y, z, r):
+        pass
+
+    @abstractmethod
+    async def send_external_tracking_data(self, position: np.ndarray, rotation: np.ndarray,
+                                          covariance: np.ndarray | None = None):
+        pass
+
     def clear_queue(self) -> None:
-        """ Clears the action queue.
+        """Clears the action queue.
 
         Does not cancel the current action.
 
@@ -491,7 +501,7 @@ class Drone(ABC, threading.Thread):
         self.action_queue.clear()
 
     def cancel_action(self) -> None:
-        """ Cancels the current action task
+        """Cancels the current action task
 
         :return:
         """
@@ -544,7 +554,7 @@ class DroneMAVSDK(Drone):
 
         # How often (per second) we request position information from the drone. The same interval is used by path
         # planning algorithms for their time resolution.
-        self.position_update_rate = config.position_rate
+        self.position_update_rate = self.config.position_rate
 
         self.mav_conn: MAVPassthrough = MAVPassthrough(loggername=f"{name}_MAVLINK", log_messages=self.config.position_rate)
 
@@ -893,9 +903,7 @@ class DroneMAVSDK(Drone):
             raise RuntimeError("Can't take off without being armed!")
 
     async def takeoff(self, altitude=2.0, allow_in_air=True) -> bool:
-        """
-
-        :param altitude:
+        """:param altitude:
         :return:
         """
         if not allow_in_air and self.in_air:
@@ -916,9 +924,7 @@ class DroneMAVSDK(Drone):
         return pos_yaw
 
     async def _takeoff_using_takeoffmode(self, altitude=2.0):
-        """
-
-        :param altitude: Currently ignored.
+        """:param altitude: Currently ignored.
         :return:
         """
         self.logger.info("Trying to take off...")
@@ -936,9 +942,7 @@ class DroneMAVSDK(Drone):
         return True
 
     async def _takeoff_using_offboard(self, altitude=2.0, tolerance=0.25):
-        """
-
-        :param altitude:
+        """:param altitude:
         :param tolerance:
         :return:
         """
@@ -1077,7 +1081,7 @@ class DroneMAVSDK(Drone):
         return True
 
     async def spin_at_rate(self, yaw_rate, duration, direction="cw"):
-        """ Spin in place at the given rate for the given duration.
+        """Spin in place at the given rate for the given duration.
 
         Pausable.
 
@@ -1104,7 +1108,7 @@ class DroneMAVSDK(Drone):
 
     async def fly_to(self, local: np.ndarray | None = None, gps: np.ndarray | None = None, yaw: float | None = None,
                      waypoint: Waypoint | None = None, tolerance=0.25, put_into_offboard=True, log=True):
-        """ Fly to a specified point in offboard mode. Uses path generators and followers to get there.
+        """Fly to a specified point in offboard mode. Uses path generators and followers to get there.
 
         If multiple target are provided (for example GPS and local coordinates), we prefer coordinates in this fashion:
         Waypoint > GPS > local, i.e. in the example, the local coordinates would be ignored.
@@ -1290,7 +1294,7 @@ class DroneMAVSDK(Drone):
             if ema_alt_error < error_thresh and time.time() > start_time + min_time:
                 going_down = False
             old_alt = cur_alt
-            target_pos[2] = cur_alt + 0.5
+            target_pos[2] = cur_alt + 0.4
             await self.set_setpoint(Waypoint(WayPointType.POS_VEL_NED, pos=target_pos[:3], vel=[0, 0, 0.3], yaw=target_pos[3]))
             await asyncio.sleep(1/update_freq)
         self.logger.info("Landed!")
@@ -1327,8 +1331,19 @@ class DroneMAVSDK(Drone):
         result = await self._error_wrapper(self.system.manual_control.set_manual_control_input, ManualControlError, x, y, z, r)
         return result
 
+    async def send_external_tracking_data(self, position: list[float], rotation: list[float], covariance: np.ndarray = None):
+        covariance = Covariance([math.nan]) if covariance is None else covariance
+        vis_pos_estimate = VisionPositionEstimate(0,
+                                                  PositionBody(*position),
+                                                  AngleBody(*rotation),
+                                                  covariance,
+                                                  0)
+        res = await self._error_wrapper(self.system.mocap.set_vision_position_estimate, MocapError,
+                                        vis_pos_estimate, reraise=True)
+        return res
+
     async def stop_execution(self):
-        """ Stops all coroutines, closes all connections, etc.
+        """Stops all coroutines, closes all connections, etc.
 
         :return:
         """
@@ -1336,6 +1351,10 @@ class DroneMAVSDK(Drone):
             if self.path_follower.is_active:
                 await self.path_follower.deactivate()
             self.path_follower.close()
+        while len(self._running_tasks) > 0:
+            task = self._running_tasks.pop()
+            if isinstance(task, asyncio.Task):
+                task.cancel()
         try:
             if self.mav_conn:
                 await self.mav_conn.stop()
@@ -1366,10 +1385,27 @@ class DroneMAVSDK(Drone):
         await super().kill()
         return True
 
-    async def _error_wrapper(self, func, error_type, *args, **kwargs):
+    async def _error_wrapper(self, func, error_type, *args, reraise = False, **kwargs):
+        """Wrapper for MAVSDK functions.
+
+        Intended for use with MAVSDK coroutines. Catches exceptions and returns False instead.
+
+        Args:
+            func: The coroutine, as a callable.
+            error_type: The type of error raised by func.
+            *args: Passed to the coroutine being executed.
+            reraise: If ``True``, exceptions are reraised.
+            **kwargs: Passed to the coroutine being executed.
+
+        Returns:
+            ``True`` if the MAVSDK call succeeds or ``False`` if the error type was raised.
+        """
         try:
             await func(*args, **kwargs)
         except error_type as e:
-            self.logger.error(e._result.result_str)
-            return False
+            if reraise:
+                raise
+            else:
+                self.logger.error(e._result.result_str)
+                return False
         return True

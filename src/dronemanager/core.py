@@ -33,8 +33,7 @@ pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s - %(messa
 
 
 class DMConfig:
-    """
-    Configuration class for DroneManager
+    """Configuration class for DroneManager
 
     """
 
@@ -92,14 +91,13 @@ class DMConfig:
 
 
 class DroneManager:
-    """
-    Core class of the library.
+    """Core class of the library.
 
     """
     # TODO: Handle MAVSDK crashes - Not sure at all what causes them
     # TODO: Refactor functions other than fly_to to also use the list wrapping convenience
 
-    def __init__(self, drone_class, logger=None, log_to_console=True, console_log_level=logging.INFO):
+    def __init__(self, drone_class, logger: logging.Logger = None, log_to_console=True, console_log_level=logging.INFO):
         self.drone_class = drone_class
         self.drones: dict[str, Drone] = {}
         # self.drones acts as the list/manager of connected drones, any function that writes or deletes items should
@@ -115,6 +113,8 @@ class DroneManager:
         self.system_id = self.config.mav_system_id
         self.component_id = self.config.mav_component_id
 
+        self.logging_handlers = set()
+
         if logger is None:
             self.logger = logging.getLogger("Manager")
             self.logger.setLevel(logging.DEBUG)
@@ -124,6 +124,7 @@ class DroneManager:
             file_handler = logging.FileHandler(os.path.join(LOG_DIR, filename))
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.add(file_handler)
             self.logger.addHandler(file_handler)
         else:
             self.logger = logger
@@ -132,6 +133,7 @@ class DroneManager:
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setLevel(console_log_level)
             console_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.add(console_handler)
             self.logger.addHandler(console_handler)
 
         self.plugin_loader = PluginLoader(self, self.logger, "PluginLoader")
@@ -355,7 +357,7 @@ class DroneManager:
                                           "Landing drone(s) {}.", schedule=schedule)
 
     def set_fence(self, names: str | Collection[str], fence: Fence):
-        """ Set a fence on drones"""
+        """Set a fence on drones"""
         if isinstance(names, str):
             names = [names]
         try:
@@ -415,7 +417,7 @@ class DroneManager:
     async def move(self, names: str | Collection[str], offset: Collection[float], yaw: Collection[float] | float | None = None,
                    use_gps: bool | Collection[bool] = True, tol: float | Collection[float] = 0.25,
                    schedule: bool = True):
-        """ Move the drones by offsets meters from their current positions. Which coordinate system is used depends on
+        """Move the drones by offsets meters from their current positions. Which coordinate system is used depends on
         no_gps.
 
         :param names:
@@ -453,7 +455,7 @@ class DroneManager:
     async def go_to(self, names: str | Collection[str], local: Collection[float] | None = None,
                      gps: Collection[float] | None = None, waypoint: list[Waypoint] | None = None,
                      yaw: Collection[float] | float | None = None, tol: float | Collection[float] = 0.25, schedule=True):
-        """ Note that this uses the GO TO Mavlink command instead of offboard mode."""
+        """Note that this uses the GO TO Mavlink command instead of offboard mode."""
         assert local is not None or gps is not None or waypoint is not None, ("Must provide either waypoints, gps or "
                                                                               "local coordinates!")
         # Maybe allow for single args and then duplicate those for all drones?
@@ -526,11 +528,19 @@ class DroneManager:
     async def close(self):
         await self.disconnect(self.drones)
         await self.plugin_loader.close()
+        for handler in self.logging_handlers:
+            self.logger.removeHandler(handler)
+
+    def save_config(self, alt_path: str | None = None):
+        if alt_path is None:
+            self.config.to_file(get_config().as_posix())
+        else:
+            self.config.to_file(alt_path)
 
 # PLUGINS ##############################################################################################################
 
     @property
-    def plugin_options(self):
+    def plugin_options(self) -> list[str]:
         return self.plugin_loader.plugin_options()
 
     @property

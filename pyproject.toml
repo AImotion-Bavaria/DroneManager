@@ -19,13 +19,13 @@ dependencies = [
     "rich",
     "mavsdk==3.17.*",
     "pymavlink",
+    "pyserial",
     "pygame-ce",
     "haversine",
     "scipy",
     "requests",
     "ruckig>=0.19.4",
-    "opencv-python",
-    "pyserial"]
+    "opencv-python"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent", ]
@@ -42,7 +42,75 @@ dm = "dronemanager.app:main"
 [project.optional-dependencies]
 docs = [
     "sphinx",
-    "sphinx_rtd_theme"]
+    "sphinx_rtd_theme",
+    "sphinx-autodoc-typehints",
+]
+tests = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "responses",  # For mocking requests.
+    "flake8",
+    "flake8-pyproject",
+    "flake8-annotations",
+    "pydoclint[flake8]",
+    "ruff",
+]
 
 [tool.setuptools.package-data]
 dronemanager = ["resources/*"]
+
+### Testing configuration ###
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+    "--cov=dronemanager",
+    "--cov-report=term-missing",
+    "--cov-report=json",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.report]
+omit = [
+    "*/dronemanager/plugins/NatNet/*",
+    "*/dronemanager/scripts/*"
+]
+fail_under = 80
+
+[tool.flake8]
+max-line-length = 120
+style = "google"
+extend-ignore = [
+    "ANN002",
+    "ANN003",
+    "ANN101",
+    "ANN102",
+    "DOC607",
+#    "DOC602",
+#    "DOC603",
+]
+extend-exclude = [
+    "src/dronemanager/plugins/NatNet/*",
+]
+arg-type-hints-in-docstring = false
+check-return-types = false
+check-yield-types = false
+skip-checking-short-docstrings = false
+suppress-none-returning = true
+allow-init-docstring = true
+
+only-attrs-with-ClassVar-are-treated-as-class-attrs = true
+require-inline-class-var-docs = true
+
+[tool.ruff]
+extend-exclude = [
+    "src/dronemanager/plugins/NatNet/*",
+]
+
+[tool.ruff.lint]
+select = ["D", ]
+# ignore = ["D107",]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

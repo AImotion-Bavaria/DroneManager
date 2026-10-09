@@ -1,4 +1,4 @@
-""" Plugin for controlling MAVSDK Cameras """
+"""Plugin for controlling MAVSDK Cameras"""
 import asyncio
 import os
 import struct
@@ -42,7 +42,7 @@ class CameraPlugin(Plugin):
         await super().start()
 
     async def close(self):
-        """ Removes all cameras """
+        """Removes all cameras"""
         await super().close()
         coros = [self.remove_camera(drone) for drone in self.cameras]
         await asyncio.gather(*coros)
@@ -54,7 +54,7 @@ class CameraPlugin(Plugin):
         return True
 
     async def add_camera(self, drone: str, camera_id: int = 100):
-        """ Add cameras from/for a given drone to the plugin"""
+        """Add cameras from/for a given drone to the plugin"""
         self.logger.info(f"Adding camera to drone {drone}")
         try:
             drone_object = self.dm.drones.get(drone, None)
@@ -76,14 +76,14 @@ class CameraPlugin(Plugin):
             return False
 
     async def remove_camera(self, drone: str):
-        """ Remove a camera from the plugin"""
+        """Remove a camera from the plugin"""
         self.logger.info(f"Removing camera from drone {drone}")
         camera = self.cameras.pop(drone)
         await camera.close()
         del camera
 
-    async def status(self, drone: str):
-        if self.check_has_camera(drone):
+    async def status(self):
+        for drone in self.cameras:
             self.cameras[drone].log_status()
 
     async def parameters(self, drone: str):
@@ -458,7 +458,7 @@ class Camera:
         self.drone.mav_conn.add_drone_message_callback(322, self._listen_param_updates)
         checker_task = asyncio.create_task(self._param_receive_checker())
         self._running_tasks.add(checker_task)
-        self._running_tasks.add(coroutine_awaiter(checker_task, self.logger))
+        self._running_tasks.add(asyncio.create_task(coroutine_awaiter(checker_task, self.logger)))
 
     async def _param_receive_checker(self):
         while len(self._received_params) < self._param_count:

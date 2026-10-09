@@ -1,21 +1,21 @@
-""" This module contains generic utility functions used throughout the software, mostly relating to GPS and NED
-positions.
+"""This module contains generic utility functions used throughout the software.
 
+They mostly relate to GPS and NED positions.
 Unless stated otherwise, a GPS coordinate is any indexable sequence with the latitude, longitude and AMSL in that order.
 """
-
-import math
-import pathlib
-from collections.abc import Sequence
-from urllib.parse import urlparse
-import numpy as np
-import logging
-import socket
 import asyncio
+from collections.abc import Sequence, MutableSet
+from concurrent.futures import Future
 from haversine import inverse_haversine, haversine, Direction, Unit
-
-from platformdirs import user_documents_path
 from importlib.resources import files
+import logging
+import math
+import numpy as np
+import pathlib
+from platformdirs import user_documents_path
+import socket
+from urllib.parse import urlparse
+
 
 COMMON_FORMATTER = logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)s %(name)s - %(message)s', datefmt="%H:%M:%S")
 """The common formatter string for the loggers.
@@ -29,8 +29,8 @@ EARTH_RADIUS = 6371000
 
 NAME = "DroneManager"
 
-DM_INSTALL_DIR = user_documents_path().joinpath(NAME)
-"""The directory where DroneManager directories and files will be installed.
+DOC_DIR = user_documents_path().joinpath(NAME)
+"""The directory where DroneManager directories for drop-in files will be installed.
 
 Defaults to the user "documents" folder.
 
@@ -43,43 +43,52 @@ SRC_DIR = pathlib.Path(__file__).parent
 :meta hide-value:
 """
 
-LOG_DIR = DM_INSTALL_DIR.joinpath("Logs")  #Path(__file__).parent.parent.parent.joinpath("logs")
+LOG_DIR = DOC_DIR.joinpath("Logs")
 """ The directory where all the log files are saved.
 
 :meta hide-value:
 """
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-CACHE_DIR = DM_INSTALL_DIR.joinpath(".cache")   #Path(__file__).parent.parent.parent.joinpath(".cache")
-"""The directory for any information that might be worth caching. Currently only used for camera definition information.
+CACHE_DIR = DOC_DIR.joinpath(".cache")
+""" The directory for any information that might be worth caching.
+
+Currently only used for camera definition information.
 
 :meta hide-value:
 """
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-CONFIG_FILE = DM_INSTALL_DIR.joinpath("config.json")  #Path(__file__).parent.parent.parent.joinpath("config.json")
-"""Location of the configuration file.
+_CONFIG_FILE = DOC_DIR.joinpath("config.json")
+""" Location of the configuration file.
 
 :meta hide-value:
 """
 
 
-def get_config():
-    if not CONFIG_FILE.exists():
+def get_config() -> pathlib.Path:
+    """Returns the location of the configuration json.
+
+    By template config is shipped with DroneManager, which is installed if the file is otherwise missing.
+
+    Returns:
+        The path to the config file.
+    """
+    if not _CONFIG_FILE.exists():
         default_config = files("dronemanager").joinpath(
             "resources/config.json"
         )
 
-        CONFIG_FILE.write_text(
+        _CONFIG_FILE.write_text(
             default_config.read_text(),
             encoding="utf-8",
         )
 
-    return CONFIG_FILE
+    return _CONFIG_FILE
 
 
 def dist_ned(pos1: np.ndarray, pos2: np.ndarray) -> float:
-    """ The euclidian distance between two cartesian points.
+    """The euclidian distance between two cartesian points.
 
     For n-dimensional points, the arrays should have shape (n,).
 
@@ -94,7 +103,7 @@ def dist_ned(pos1: np.ndarray, pos2: np.ndarray) -> float:
 
 
 def dist_gps(gps1: Sequence[float], gps2: Sequence[float]) -> float:
-    """ Approximate euclidian distance between two GPS coordinates.
+    """Approximate euclidian distance between two GPS coordinates.
 
     Haversine functions with WGS84 are used to compute the horizontal component of the distance.
 
@@ -107,11 +116,11 @@ def dist_gps(gps1: Sequence[float], gps2: Sequence[float]) -> float:
     """
     dist_horiz = haversine((gps1[0], gps1[1]), (gps2[0], gps2[1]), unit=Unit.METERS)
     dist_alt = gps1[2] - gps2[2]
-    return math.sqrt(dist_horiz*dist_horiz + dist_alt*dist_alt)
+    return math.sqrt(dist_horiz * dist_horiz + dist_alt * dist_alt)
 
 
 def heading_ned(pos1: Sequence[float], pos2: Sequence[float]) -> float:
-    """ The heading from one position to another, in degrees.
+    """The heading from one position to another, in degrees.
 
     This is the angle from north, such that moving in that direction from the first point will cross the second point.
     The range is from -180 to +180 with 0 north and +90 east. The two positions must be given as NED.
@@ -128,7 +137,7 @@ def heading_ned(pos1: Sequence[float], pos2: Sequence[float]) -> float:
 
 
 def heading_gps(gps1: Sequence[float], gps2: Sequence[float]) -> float:
-    """ The heading from one GPS position to another, in degrees.
+    """The heading from one GPS position to another, in degrees.
 
     This is the angle from north, such that moving in that direction from the first point will cross the second point.
     The range is from -180 to +180 with 0 north and +90 east. The two positions must be given as GPS coordinates with
@@ -150,7 +159,7 @@ def heading_gps(gps1: Sequence[float], gps2: Sequence[float]) -> float:
 
 
 def relative_gps(gps: Sequence[float], offset: Sequence[float]) -> tuple[float, float, float]:
-    """ Create a GPS coordinate that is shifted from the input GPS by a NED input offset.
+    """Create a GPS coordinate that is shifted from the input GPS by a NED input offset.
 
     Uses haversine functions.
 
@@ -168,10 +177,12 @@ def relative_gps(gps: Sequence[float], offset: Sequence[float]) -> tuple[float, 
     return target_lat, target_long, target_alt
 
 
-def offset_from_gps(origin: Sequence[float], gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, float, float]:
-    """ Given two GPS points, computes the heading and distance between them and then creates a new point
-    separated fom a third GPS point by the same heading and distance.
+def offset_from_gps(origin: Sequence[float], gps1: Sequence[float], gps2: Sequence[float]) \
+        -> tuple[float, float, float]:
+    """Create GPS point offset from origin by same distance and heading as two other GPS points.
 
+    Given two GPS points, computes the heading and distance between them and then creates a new point
+    separated fom a third GPS point by the same heading and distance.
     Uses haversine functions.
 
     Args:
@@ -184,13 +195,14 @@ def offset_from_gps(origin: Sequence[float], gps1: Sequence[float], gps2: Sequen
     """
     dist_horiz = haversine((gps1[0], gps1[1]), (gps2[0], gps2[1]), unit=Unit.METERS)
     dist_alt = gps2[2] - gps1[2]
-    heading = heading_gps(gps1, gps2)
+    heading = heading_gps(gps1, gps2) * math.pi / 180
     lat, long = inverse_haversine(origin[:2], dist_horiz, heading, unit=Unit.METERS)
     return lat, long, origin[2] + dist_alt
 
 
 def ned_from_gps(gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, float, float]:
-    """ Given two GPS points, compute the NED difference between the two positions.
+    """Given two GPS points, compute the NED difference between the two positions.
+
     Utilizes the same algorithm as PX4 http://mathworld.wolfram.com/AzimuthalEquidistantProjection.html
 
     Args:
@@ -200,13 +212,13 @@ def ned_from_gps(gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, f
     Returns:
         A tuple with the north, east, down offset between the two GPS coordinates.
     """
-    lat1_rad = gps1[0]*math.pi / 180
-    lat2_rad = gps2[0]*math.pi / 180
-    long1_rad = gps1[1]*math.pi / 180
-    long2_rad = gps2[1]*math.pi / 180
-    cos_long_diff = math.cos(long2_rad-long1_rad)
+    lat1_rad = gps1[0] * math.pi / 180
+    lat2_rad = gps2[0] * math.pi / 180
+    long1_rad = gps1[1] * math.pi / 180
+    long2_rad = gps2[1] * math.pi / 180
+    cos_long_diff = math.cos(long2_rad - long1_rad)
 
-    arg = math.sin(lat1_rad)*math.sin(lat2_rad) + math.cos(lat1_rad)*math.cos(lat2_rad)*cos_long_diff
+    arg = math.sin(lat1_rad) * math.sin(lat2_rad) + math.cos(lat1_rad) * math.cos(lat2_rad) * cos_long_diff
     if arg > 1.0:
         arg = 1.0
     if arg < -1.0:
@@ -216,13 +228,14 @@ def ned_from_gps(gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, f
     if abs(c) > 0:
         k = c / math.sin(c)
 
-    north = k * (math.cos(lat1_rad)*math.sin(lat2_rad)-math.sin(lat1_rad)*math.cos(lat2_rad)*cos_long_diff) * EARTH_RADIUS
-    east = k * (math.cos(lat2_rad) * math.sin(long2_rad-long1_rad)) * EARTH_RADIUS
-    down = gps1[2] - gps2[2]
-    return north, east, down
+    north = k * (math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * cos_long_diff)
+    east = k * math.cos(lat2_rad) * math.sin(long2_rad - long1_rad)
+    down = gps2[2] - gps1[2]
+    return north * EARTH_RADIUS, east * EARTH_RADIUS, down
+
 
 def get_free_port() -> int:
-    """ Get a free network port.
+    """Get a free network port.
 
     The port is not guaranteed to be free once the function returns, but they usually are.
 
@@ -237,7 +250,7 @@ def get_free_port() -> int:
 
 
 def parse_address(string: str) -> tuple[str, str, int]:
-    """ Parses a connection string of the form ``schema://host:appendix``.
+    """Parses a connection string of the form ``schema://host:appendix``.
 
     Also used to ensure that udp://:14540, udp://localhost:14540 and udp://127.0.0.1:14540 are recognized as equivalent.
 
@@ -253,6 +266,7 @@ def parse_address(string: str) -> tuple[str, str, int]:
     scheme, rest = string.split("://")
     if scheme == "serial":
         loc, append = rest.split(":")
+        append = int(append)
     else:
         parse_drone_addr = urlparse(string)
         scheme = parse_drone_addr.scheme
@@ -271,8 +285,8 @@ def parse_address(string: str) -> tuple[str, str, int]:
     return scheme, loc, append
 
 
-async def coroutine_awaiter(task: asyncio.Future, logger: logging.Logger):
-    """ Awaits the provided coroutine, logging any exceptions.
+async def coroutine_awaiter(task: asyncio.Future | Future, logger: logging.Logger):
+    """Awaits the provided coroutine, logging any exceptions.
 
     In DroneManager, there are many functions that run indefinitely without a concrete return value. These functions
     are not "naturally" awaited at any point in the code, which can lead to exceptions being silently dropped.
@@ -282,7 +296,6 @@ async def coroutine_awaiter(task: asyncio.Future, logger: logging.Logger):
     Args:
         task: The task or future to await.
         logger: This logger will be used for any exception logging.
-
     """
     try:
         if isinstance(task, asyncio.Future):
@@ -290,8 +303,23 @@ async def coroutine_awaiter(task: asyncio.Future, logger: logging.Logger):
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        logger.error(f"Encountered an exception in a coroutine! See the log for more details")
-        logger.debug(e, exc_info=True)
+        logger.error("Encountered an exception in a coroutine! See the log for more details")
+        logger.debug(repr(e), exc_info=True)
+
+
+def cancel_running_tasks(running_tasks: MutableSet[asyncio.Future | Future]):
+    """Cancel all tasks in a collection of tasks.
+
+    This is a common pattern in DroneManager, which is why the functionality is bundled here.
+
+    Args:
+        running_tasks: A set of tasks to be cancelled.
+    """
+    while len(running_tasks) > 0:
+        task = running_tasks.pop()
+        if isinstance(task, asyncio.Future) or isinstance(task, Future):
+            task.cancel()
+
 
 # The first haversine/ inverse_haversine calls are slow, because of numba stuff, so do it here
 dist_gps([10, 20, 300], [20, 10, 400])

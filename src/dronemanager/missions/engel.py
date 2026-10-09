@@ -1,4 +1,4 @@
-""" Mission for ENGEL data collection.
+"""Mission for ENGEL data collection.
 
 Capture images and combine with weather data and position information from the capturing drone, storing them.
 Also includes functions to retake the same position as in a previous image and capture another image, as well as
@@ -21,12 +21,15 @@ from dronemanager.plugins.mission import Mission
 from dronemanager.sensors.ecowitt import WeatherData
 from dronemanager.plugins.camera import CameraParameter, Camera
 from dronemanager.plugins.gimbal import Gimbal
-from dronemanager.plugins.controllers import PS4Mapping
-from dronemanager.utils import LOG_DIR, coroutine_awaiter
+from dronemanager.plugins.controllers import ActionInputType
+from dronemanager.utils import CACHE_DIR, coroutine_awaiter
 
 
-CAPTURE_DIR = os.path.join(LOG_DIR, "engel_data_captures")
+CAPTURE_DIR = CACHE_DIR.joinpath("mission-data", "engel_data_captures")
 os.makedirs(CAPTURE_DIR, exist_ok=True)
+
+
+# TODO: Figure out controller setup, bindings, controller types, etc.
 
 
 class EngelImageInfo:
@@ -102,7 +105,7 @@ class ENGELCaptureInfo:
 
 
 class ENGELDataMission(Mission):
-    """ Data collection mission for ENGEL
+    """Data collection mission for ENGEL
 
     """
 
@@ -147,8 +150,8 @@ class ENGELDataMission(Mission):
         self._gimbal_min_pitch = -44
 
         # Controller stuff
-        self._added_controller_buttons: dict[int, Callable] = {}
-        self._added_controller_axis_methods: set[Callable] = set()
+        self.controller = None
+        self._added_controller_actions: set[str] = set()
 
         # Gimbal is controlled with triggers, press more to move more. Press square to switch between pitch and yaw control.
         self._gimbal_rate = 0
@@ -163,21 +166,19 @@ class ENGELDataMission(Mission):
             self.logger.warning("Couldn't connect to weather sensor, using dummy values!")
 
     async def close(self):
-        for button, func in self._added_controller_buttons.items():
-            PS4Mapping.remove_method_from_button(button, func)
-        for func in self._added_controller_axis_methods:
-            PS4Mapping.remove_axis_method(func)
+        for action_name in self._added_controller_actions:
+            self.controller.mapping.remove_action(action_name)
         await super().close()
 
     async def connect(self):
-        """ Connect to the Leitstand sensor"""
+        """Connect to the Leitstand sensor"""
         connected = await self.dm.ecowitt.connect("192.168.1.41")
         if connected:
             self.weather_sensor = self.dm.ecowitt
         return connected
 
     async def configure_cam(self):
-        """ Set parameters for our camera (Workswell WIRIS enterprise), won't work with others"""
+        """Set parameters for our camera (Workswell WIRIS enterprise), won't work with others"""
         # Standard Parameter Set:
         # IMG_RAD_TIFF      1
         # IMG_RAD_JPEG      0
@@ -207,7 +208,7 @@ class ENGELDataMission(Mission):
         await self.camera.set_parameter("ZOOM_VISIBLE_I", self.camera.parse_param_value("ZOOM_VISIBLE_I", "1.0"))
 
     async def _imaged_captured_callback(self, msg):
-        """ Check CAMERA_IMAGE_CAPTURED messages for capture_result and save info if success, log failure otherwise
+        """Check CAMERA_IMAGE_CAPTURED messages for capture_result and save info if success, log failure otherwise
 
         This message contains this info:
         time_utc, milliseconds since epoch or boot (unfortunately boot for our camera). Used
@@ -221,9 +222,9 @@ class ENGELDataMission(Mission):
         """
         if msg.capture_result == 1:
             if msg.time_utc < 1e12:  # Assume this is reporting time since boot if too small
-                time_stamp = datetime.datetime.now(datetime.UTC)
+                time_stamp = datetime.datetime.now(datetime.timezone.utc)
             else:
-                time_stamp = datetime.datetime.fromtimestamp(msg.time_utc / 1e3, datetime.UTC)
+                time_stamp = datetime.datetime.fromtimestamp(msg.time_utc / 1e3, datetime.timezone.utc)
             gps = np.asarray([msg.lat / 1e7, msg.lon / 1e7, msg.alt / 1e3])
             file_url = msg.file_url
             cur_drone_att = self.dm.drones[self.drone_name].attitude.copy()
@@ -239,7 +240,7 @@ class ENGELDataMission(Mission):
             self.logger.debug(msg.to_dict())
 
     async def do_capture(self, reference_capture: ENGELCaptureInfo | None = None):
-        """ Capture an image and store relevant data. """
+        """Capture an image and store relevant data."""
         try:
             if self.capturing:
                 self.logger.warning("Already doing a capture, skipping")
@@ -250,7 +251,7 @@ class ENGELDataMission(Mission):
                 weather_data = await self.weather_sensor.get_data()
             else:
                 self.logger.warning(f"No Weather sensor, using dummy data!")
-                weather_data = WeatherData(datetime.datetime.now(datetime.UTC))
+                weather_data = WeatherData(datetime.datetime.now(datetime.timezone.utc))
 
             cam_params = [(param.name, param.value) for param in list(self.camera.parameters.values())]
 
@@ -306,7 +307,7 @@ class ENGELDataMission(Mission):
         await self._replay_captures() # Can't actually just queue _replay captures, as it cancels itself during moves
 
     async def _replay_captures(self):
-        """ Function to take the position from previous captures saved to file and capture them all again."""
+        """Function to take the position from previous captures saved to file and capture them all again."""
         # For each loaded capture: Set camera parameters, fly to position, optionally refine position, take new capture
         # Currently just prints loaded info for debug purposes
         drone = self.drones[self.drone_name]
@@ -320,7 +321,7 @@ class ENGELDataMission(Mission):
 
                 # Set camera parameters
                 cam_set_task = asyncio.create_task(self.set_camera_parameters(capture.camera_parameters))
-                self._running_tasks.add(cam_set_task)
+                self.running_tasks.add(cam_set_task)
                 # Fly to position and point gimbal
                 # Have to reset gimbal position to drone-relative 0 to prevent running into gimbal limit
                 await self.gimbal.set_gimbal_mode("follow")
@@ -377,7 +378,7 @@ class ENGELDataMission(Mission):
                 self.logger.debug(repr(e), exc_info=True)
 
     async def transfer(self, drive_letter: str):
-        """ Load images from camera and do assorted metadata processing.
+        """Load images from camera and do assorted metadata processing.
 
         Loads images from camera and stores them in a folder named after their capture ID. The capture information file
         is also rewritten to account for this. This is intended to be done after flights with the camera directly
@@ -441,9 +442,9 @@ class ENGELDataMission(Mission):
 
     def _save_captures_to_file(self, captures, filename: str | pathlib.Path = None, merge_existing = False,
                                make_relative = False):
-        """ Save all capture information to a file, images will have to be downloaded separately anyway. """
+        """Save all capture information to a file, images will have to be downloaded separately anyway."""
         if filename is None:
-            timestamp = datetime.datetime.now(datetime.UTC)
+            timestamp = datetime.datetime.now(datetime.timezone.utc)
             filename = f"engel_captures_{timestamp.hour}{timestamp.minute}{timestamp.second}-{timestamp.day}-{timestamp.month}-{timestamp.year}.json"
         file_path = self._normal_dir_or_other_path(filename)
         # If the file already exists, append new captures to old
@@ -477,8 +478,7 @@ class ENGELDataMission(Mission):
         return file_path
 
     async def load_captures_from_file(self, filename: str):
-        """ Load capture information from a file for the purpose of replaying it. """
-
+        """Load capture information from a file for the purpose of replaying it."""
         file_path = self._normal_dir_or_other_path(filename)
         captures = self._load_captures_from_file(file_path)
         self.loaded_captures = captures
@@ -486,7 +486,7 @@ class ENGELDataMission(Mission):
         self.logger.info(f"Loaded past captures from file {file_path}")
 
     async def reset(self):
-        """ Clear capture info """
+        """Clear capture info"""
         # Resets variables as if the mission was just loaded. Useful for replay testing.
         self.captures = []
         self.loaded_captures = []
@@ -496,7 +496,7 @@ class ENGELDataMission(Mission):
         await self._done()  # Same issue as with _replay
 
     async def _done(self):
-        """ Save any captures, reset and fly back to base and land"""
+        """Save any captures, reset and fly back to base and land"""
         await self.save_captures_to_file()
         await self.reset()
         await self.dm.fly_to(self.drone_name, waypoint=self.drones[self.drone_name].return_position)
@@ -504,19 +504,25 @@ class ENGELDataMission(Mission):
         await self.dm.disarm(self.drone_name)
 
     async def status(self):
-        """ Print information, such as how many captures we have taken"""
+        """Print information, such as how many captures we have taken"""
         self.logger.info(f"Drone {self.drones}. {len(self.captures)} current, {len(self.loaded_captures)} old captures.")
 
     def _register_controller_inputs(self):
-        PS4Mapping.add_method_to_button(3, self._do_capture_controller)  # Do capture on Triangle
-        self._added_controller_buttons[3] = self._do_capture_controller
-        PS4Mapping.add_method_to_button(2, self._swap_gimbal_axis)
-        self._added_controller_buttons[2] = self._swap_gimbal_axis
-        PS4Mapping.add_axis_method(self._get_gimbal_rate, [4, 5])
-        self._added_controller_axis_methods.add(self._get_gimbal_rate)
+        if self.controller.mapping.name == "PS4 Controller":
+            # Do capture on Triangle
+            self.controller.mapping.add_action("Engel.Capture", ActionInputType.Button, self._do_capture_controller, 3)
+            self._added_controller_actions.add("Engel.Capture")
+            # Swap gimbal axis with Square
+            self.controller.mapping.add_action("Engel.SwapGimbalAxis", ActionInputType.Button, self._swap_gimbal_axis, 2)
+            self._added_controller_actions.add("Engel.SwapGimbalAxis")
+            # Control gimbal rates with triggers.
+            self.controller.mapping.add_action("Engel.GimbalRate", ActionInputType.Axis, self._get_gimbal_rate, [4, 5])
+            self._added_controller_actions.add("Engel.GimbalRate")
+        else:
+            self.logger.warning("Engel controller functions do not support this controller!")
 
     async def add_drones(self, names: list[str]):
-        """ Adds camera and gimbal objects and stores current position for rtl"""
+        """Adds camera and gimbal objects and stores current position for rtl"""
         if len(names) + len(self.drones) > 1:
             self.logger.warning("This mission only supports single drones!")
             return False
@@ -538,8 +544,8 @@ class ENGELDataMission(Mission):
                     await self.gimbal.set_gimbal_mode("follow")  # Gimbal mode follow so it points forward while flying
                     await self.gimbal.set_gimbal_angles(0.1, 0.1)
                     self._gimbal_frequency = self.dm.drones[self.drone_name].position_update_rate
+                    self.controller = self.dm.controllers.set_drone(self.drone_name)
                     self._register_controller_inputs()
-                    self.dm.controllers.set_drone(self.drone_name)
                     self.logger.info(f"Added drone {name} to mission!")
                     return True
                 else:
@@ -550,7 +556,7 @@ class ENGELDataMission(Mission):
         return False
 
     async def remove_drones(self, names: list[str]):
-        """ Removes camera and gimbal objects """
+        """Removes camera and gimbal objects"""
         for name in names:
             try:
                 self.drones.pop(name)
@@ -560,8 +566,10 @@ class ENGELDataMission(Mission):
                 self.camera = None
                 await self.dm.gimbal.remove_gimbal(name)
                 await self.dm.camera.remove_camera(name)
+                return True
             except KeyError:
                 self.logger.error(f"No drone named {name}")
+                return False
 
     async def mission_ready(self, drone: str):
         return drone in self.drones
@@ -571,8 +579,8 @@ class ENGELDataMission(Mission):
     def _do_capture_controller(self):
         capture_task = asyncio.create_task(self.do_capture())
         capture_awaiter = asyncio.create_task(coroutine_awaiter(capture_task, self.logger))
-        self._running_tasks.add(capture_task)
-        self._running_tasks.add(capture_awaiter)
+        self.running_tasks.add(capture_task)
+        self.running_tasks.add(capture_awaiter)
 
     def _swap_gimbal_axis(self):
         self.logger.info(f"Now controlling gimbal {'Pitch' if self._control_gimbal_pitch else 'Yaw'}")
@@ -587,7 +595,7 @@ class ENGELDataMission(Mission):
         self._gimbal_rate = final_value * self._gimbal_max_rate
 
     def _trigger_response_function(self, value):
-        # Controllers start at -1 and go to +1
+        # Controller triggers start at -1 and go to +1
         value = (value + 1) / 2
         if value < 0.05:
             value = 0

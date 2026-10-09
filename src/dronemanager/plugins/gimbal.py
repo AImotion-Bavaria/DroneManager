@@ -47,11 +47,9 @@ class GimbalPlugin(Plugin):
     async def start(self):
         self.logger.debug("Starting Gimbal plugin...")
         await super().start()
-        #for drone in self.dm.drones:
-        #    await self.add_gimbals(drone)
 
     async def close(self):
-        """ Removes all gimbals """
+        """Removes all gimbals"""
         await super().close()
         coros = [self.remove_gimbal(drone) for drone in self.gimbals]
         await asyncio.gather(*coros)
@@ -63,7 +61,7 @@ class GimbalPlugin(Plugin):
         return True
 
     async def add_gimbals(self, drone: str, device_id: int = 154):
-        """ Add Gimbals from/for a given drone to the plugin"""
+        """Add Gimbals from/for a given drone to the plugin"""
         self.logger.info(f"Adding gimbal to drone {drone}")
         try:
             drone_object = self.dm.drones[drone]
@@ -75,14 +73,14 @@ class GimbalPlugin(Plugin):
             return False
 
     async def remove_gimbal(self, drone: str):
-        """ Remove a gimbal from the plugin"""
+        """Remove a gimbal from the plugin"""
         self.logger.info(f"Removing gimbal to drone {drone}")
         gimbal = self.gimbals.pop(drone)
         await gimbal.close()
         del gimbal
 
-    async def status(self, drone: str):
-        if self.check_has_gimbal(drone):
+    async def status(self):
+        for drone in self.gimbals:
             self.gimbals[drone].log_status()
 
     async def take_control(self, drone: str):
@@ -101,7 +99,7 @@ class GimbalPlugin(Plugin):
     async def set_gimbal_angles(self, drone: str, pitch: float, yaw: float):
         if self.check_has_gimbal(drone):
             try:
-                res =  await self.gimbals[drone].set_gimbal_angles(pitch, yaw)
+                res = await self.gimbals[drone].set_gimbal_angles(pitch, yaw)
                 return res
             except Exception as e:
                 self.logger.error("Couldn't set angles due to an exception!")
@@ -122,9 +120,9 @@ class GimbalPlugin(Plugin):
     async def point_gimbal_at(self, drone: str, x1: float, x2: float, x3: float, relative: bool = False):
         if self.check_has_gimbal(drone):
             if relative:
-                res =  await self.gimbals[drone].point_gimbal_at_relative(x1, x2, x3)
+                res = await self.gimbals[drone].point_gimbal_at_relative(x1, x2, x3)
             else:
-                res =  await self.gimbals[drone].point_gimbal_at(x1, x2, x3)
+                res = await self.gimbals[drone].point_gimbal_at(x1, x2, x3)
             return res
         return False
 
@@ -264,7 +262,7 @@ class Gimbal:
 
 
 class GimbalMulti:
-    """ Should work with properly implemented gimbal managers, but those seem rare."""
+    """Should work with properly implemented gimbal managers, but those seem rare."""
 
     def __init__(self, logger, dm, drone):
         self.logger = logger
@@ -333,7 +331,7 @@ class GimbalMulti:
                     self._running_tasks.add(asyncio.create_task(self._check_gimbal_attitude_gimbal(gimbal_id)))
                 await asyncio.sleep(1/self.update_rate)
             except Exception as e:
-                self.logger.warning(f"Exception in the gimbal attitude check function! See logs for details.")
+                self.logger.warning("Exception in the gimbal attitude check function! See logs for details.")
                 self.logger.debug(repr(e), exc_info=True)
 
     async def _check_gimbal_attitude_gimbal(self, gimbal_id):
@@ -357,7 +355,7 @@ class GimbalMulti:
                     self._running_tasks.add(asyncio.create_task(self._check_gimbal_control_gimbal(gimbal_id)))
                 await asyncio.sleep(1/self.update_rate)
             except Exception as e:
-                self.logger.warning(f"Exception in the gimbal control check function! See logs for details.")
+                self.logger.warning("Exception in the gimbal control check function! See logs for details.")
                 self.logger.debug(repr(e), exc_info=True)
 
     async def _check_gimbal_control_gimbal(self, gimbal_id):
