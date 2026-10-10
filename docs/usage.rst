@@ -231,7 +231,7 @@ Parameter files
 
 Files are written in the QGroundControl ``.params`` format, so they can also be opened in QGroundControl and Mission
 Planner. Mission Planner style files with ``NAME,VALUE`` lines can be read as well. They are saved in the
-``Parameters`` folder of the DroneManager directory in your documents, next to the ``Logs`` folder and the
+``drone_parameters`` folder of the DroneManager directory in your documents, next to the ``Logs`` folder and the
 configuration file. Use ``param-list`` to see them.
 
 .. _drone_specific_parameters:
