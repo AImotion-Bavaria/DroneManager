@@ -126,7 +126,7 @@ jobs:
 
       - name: Restore PX4 SITL build
         id: px4-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           # Only the binaries and startup files are needed to run PX4, not the sources
           path: |
@@ -145,7 +145,7 @@ jobs:
       - name: Save PX4 SITL build
         # Saved right away, so the build is cached even if the tests fail afterwards
         if: steps.px4-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             /home/runner/px4/build/px4_sitl_default/bin
