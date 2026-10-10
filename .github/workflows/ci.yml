@@ -115,7 +115,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PX4_VERSION: v1.17.0
-      PX4_DIR: ${{ github.workspace }}/px4
+      # Outside of the repository checkout, so pytest and the linters don't pick up PX4's own files
+      PX4_DIR: /home/runner/px4
 
     steps:
       - name: Check out repository
@@ -125,21 +126,31 @@ jobs:
 
       - name: Restore PX4 SITL build
         id: px4-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           # Only the binaries and startup files are needed to run PX4, not the sources
           path: |
-            px4/build/px4_sitl_default/bin
-            px4/build/px4_sitl_default/etc
+            /home/runner/px4/build/px4_sitl_default/bin
+            /home/runner/px4/build/px4_sitl_default/etc
           key: px4-sitl-${{ env.PX4_VERSION }}-ubuntu-24.04
 
       - name: Build PX4 SITL
         if: steps.px4-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch "$PX4_VERSION" --recurse-submodules --shallow-submodules \
-            https://github.com/PX4/PX4-Autopilot.git px4
-          bash px4/Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
-          make -C px4 px4_sitl_default
+            https://github.com/PX4/PX4-Autopilot.git "$PX4_DIR"
+          bash "$PX4_DIR/Tools/setup/ubuntu.sh" --no-nuttx --no-sim-tools
+          make -C "$PX4_DIR" px4_sitl_default
+
+      - name: Save PX4 SITL build
+        # Saved right away, so the build is cached even if the tests fail afterwards
+        if: steps.px4-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /home/runner/px4/build/px4_sitl_default/bin
+            /home/runner/px4/build/px4_sitl_default/etc
+          key: px4-sitl-${{ env.PX4_VERSION }}-ubuntu-24.04
 
       - name: Set up Python
         uses: actions/setup-python@v7
