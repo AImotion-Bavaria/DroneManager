@@ -116,7 +116,7 @@ async def sitl_dm(px4_sitl: Px4Sitl) -> AsyncGenerator[DroneManager, Any]:
     drone = dm.drones.get(SITL_DRONE)
     if drone is not None:
         if drone.in_air:
-            # PX4's own landing, as DroneManager's landing can return early mid-air (fixed in a follow-up PR)
+            # PX4's own landing, so the cleanup doesn't depend on the DroneManager code under test
             await dm.change_flightmode(SITL_DRONE, "land")
             if not await wait_until(lambda: not drone.in_air, 60):
                 logging.warning("Landing the SITL drone after the test timed out.")
