@@ -39,11 +39,14 @@ async def _takeoff(dm: DroneManager, altitude: float = ALTITUDE):
         altitude: Takeoff altitude in meters.
     """
     drone = dm.drones[SITL_DRONE]
+    # The takeoff altitude is relative to the current position. The origin of the local coordinates isn't exactly at
+    # ground level, so the climb is checked, not the absolute height.
+    ground = drone.position_ned[2]
     assert await asyncio.wait_for(dm.arm(SITL_DRONE), 30) == [True]
     assert drone.is_armed
     assert await asyncio.wait_for(dm.takeoff(SITL_DRONE, altitude=altitude), 60) == [True]
     assert drone.in_air
-    assert -drone.position_ned[2] == pytest.approx(altitude, abs=POSITION_TOLERANCE)
+    assert ground - drone.position_ned[2] == pytest.approx(altitude, abs=POSITION_TOLERANCE)
 
 
 async def _land(dm: DroneManager):
