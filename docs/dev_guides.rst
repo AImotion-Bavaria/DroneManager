@@ -224,3 +224,35 @@ can lead to errors when the docstring of the parent class doesn't meet the forma
 subclass should provide its own docstring, referencing the parent class when necessary.
 
 For general formatting, see the sphinx documentation, they have examples of Google-style docstrings as well.
+
+
+Running the tests
+-----------------
+
+The tests are written with pytest. Install the test dependencies and run all tests from the repository root::
+
+    pip install -e .[tests]
+    pytest
+
+Most tests run on their own. The pipeline tests in ``tests/test_sitl`` fly a simulated drone instead: they start a
+PX4 instance with PX4's built-in SIH simulator (no Gazebo needed) and control it through DroneManager, the same way a
+script or the terminal interface would. They are marked with ``sitl``. To run everything except them::
+
+    pytest -m "not sitl"
+
+The SITL tests need a PX4 SITL build. On Linux, PX4 runs directly. On Windows, the tests start PX4 inside WSL and
+connect to it from Windows, which is the usual setup for simulated drones with DroneManager. To set up PX4, in Linux or
+in a WSL terminal::
+
+    git clone --recurse-submodules --branch v1.17.0 https://github.com/PX4/PX4-Autopilot.git ~/PX4-Autopilot
+    bash ~/PX4-Autopilot/Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
+    make -C ~/PX4-Autopilot px4_sitl_default
+
+The tests find PX4 with these environment variables:
+
+- ``PX4_DIR``: The PX4-Autopilot directory, ``~/PX4-Autopilot`` by default. On Windows, this is a path inside WSL.
+- ``PX4_WSL_DISTRO``: The WSL distribution with PX4, Windows only. Defaults to the default distribution.
+
+If PX4 can't be found, the SITL tests fail with a message instead of being skipped, so a missing setup isn't mistaken
+for passing tests. Each test starts its own PX4 instance with default parameters, so a full run takes several minutes.
+The CI runs the SITL tests on Linux. On Windows, run them locally before opening a pull request.

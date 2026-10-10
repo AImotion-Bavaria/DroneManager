@@ -648,7 +648,7 @@ class DroneMAVSDK(Drone):
         self.drone_addr = f"{scheme}://{loc}:{appendix}"
         self.logger.debug(f"Connecting to drone {self.name} @ {self.drone_addr}")
         if self.mav_conn:
-            mavsdk_passthrough_port = get_free_port()
+            mavsdk_passthrough_port = get_free_port(udp=True)
             mavsdk_passthrough_string = f"udp://:{mavsdk_passthrough_port}"
             passthrough_gcs_string = f"127.0.0.1:{mavsdk_passthrough_port}"
         else:

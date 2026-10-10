@@ -105,7 +105,70 @@ jobs:
         run: python -m pip install --force-reinstall --no-deps dist/*.whl
 
       - name: Run tests
+        # The SITL tests need PX4, which runs in the sitl job. Coverage is only checked there, with all tests.
+        run: pytest -m "not sitl" --cov-fail-under=0
+
+  sitl:
+    name: Pipeline tests with PX4 SITL and coverage check
+    needs:
+    - build
+    runs-on: ubuntu-24.04
+    env:
+      PX4_VERSION: v1.17.0
+      PX4_DIR: ${{ github.workspace }}/px4
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Restore PX4 SITL build
+        id: px4-cache
+        uses: actions/cache@v4
+        with:
+          # Only the binaries and startup files are needed to run PX4, not the sources
+          path: |
+            px4/build/px4_sitl_default/bin
+            px4/build/px4_sitl_default/etc
+          key: px4-sitl-${{ env.PX4_VERSION }}-ubuntu-24.04
+
+      - name: Build PX4 SITL
+        if: steps.px4-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$PX4_VERSION" --recurse-submodules --shallow-submodules \
+            https://github.com/PX4/PX4-Autopilot.git px4
+          bash px4/Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
+          make -C px4 px4_sitl_default
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Download distribution
+        uses: actions/download-artifact@v8
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Install test dependencies and wheel
+        run: |
+          python -m pip install .[tests]
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+
+      - name: Run all tests, including SITL, with the coverage check
         run: pytest
+
+      - name: Upload logs and coverage
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sitl-logs
+          path: |
+            coverage.json
+            ~/Documents/DroneManager/Logs
 
   check:
     # this provides a single status check for branch merge rules
@@ -114,6 +177,7 @@ jobs:
     needs:
       - lint
       - test-build
+      - sitl
     runs-on: ubuntu-latest
     steps:
       - name: Decide whether the needed jobs succeeded or failed

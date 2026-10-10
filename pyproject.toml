@@ -70,6 +70,10 @@ addopts = [
     "--cov-report=json",
 ]
 asyncio_mode = "auto"
+pythonpath = ["tests"]
+markers = [
+    "sitl: pipeline tests against a simulated PX4 (SITL). Deselect with -m \"not sitl\".",
+]
 
 [tool.coverage.report]
 omit = [

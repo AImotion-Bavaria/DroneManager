@@ -234,15 +234,19 @@ def ned_from_gps(gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, f
     return north * EARTH_RADIUS, east * EARTH_RADIUS, down
 
 
-def get_free_port() -> int:
+def get_free_port(udp: bool = False) -> int:
     """Get a free network port.
 
-    The port is not guaranteed to be free once the function returns, but they usually are.
+    The port is not guaranteed to be free once the function returns, but they usually are. TCP and UDP ports must be
+    checked separately: On Windows, Hyper-V and WSL reserve ranges of UDP ports that are still free for TCP.
+
+    Args:
+        udp: Get a free UDP port instead of a TCP port.
 
     Returns:
         The free port
     """
-    sock = socket.socket()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM if udp else socket.SOCK_STREAM)
     sock.bind(("", 0))
     port = sock.getsockname()[1]
     sock.close()
