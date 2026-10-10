@@ -210,7 +210,9 @@ class Drone(ABC, threading.Thread):
                             fut.set_result(result)
                             self.current_action = None
                         except asyncio.CancelledError:
-                            pass
+                            # The action was replaced, i.e. by an action that wasn't scheduled. Callers waiting for
+                            # it get a CancelledError instead of waiting forever.
+                            fut.cancel()
                         except Exception as e:
                             fut.set_exception(e)
                 else:
@@ -493,11 +495,14 @@ class Drone(ABC, threading.Thread):
     def clear_queue(self) -> None:
         """Clears the action queue.
 
-        Does not cancel the current action.
+        Does not cancel the current action. Callers waiting for the removed actions get a CancelledError.
 
         :return:
         """
         self.logger.debug("Clearing action queue")
+        for action, fut in self.action_queue:
+            action.close()  # Never started, close it to avoid "coroutine was never awaited" warnings
+            fut.cancel()
         self.action_queue.clear()
 
     def cancel_action(self) -> None:
@@ -762,6 +767,7 @@ class DroneMAVSDK(Drone):
         self._running_tasks.add(asyncio.create_task(self._g_pos_check()))
         self._running_tasks.add(asyncio.create_task(self._vel_rpos_check()))
         self._running_tasks.add(asyncio.create_task(self._att_check()))
+        self._running_tasks.add(asyncio.create_task(self._heading_check()))
         self._running_tasks.add(asyncio.create_task(self._battery_check()))
         self._running_tasks.add(asyncio.create_task(self._status_check()))
         self._running_tasks.add(asyncio.create_task(self._ensure_message_rates()))
@@ -1137,8 +1143,8 @@ class DroneMAVSDK(Drone):
         # Determine target waypoint, prefering waypoint over GPS over local and using current yaw if none is provided
         if waypoint is not None:
             target = waypoint
-            if waypoint.yaw is None:
-                # Maintain current yaw if none given
+            if waypoint.yaw is None or np.isnan(waypoint.yaw):
+                # Maintain current yaw if none given. Waypoints store a missing yaw as NaN.
                 waypoint.yaw = self.attitude[2]
         elif gps is not None:
             if yaw is None:
@@ -1211,7 +1217,10 @@ class DroneMAVSDK(Drone):
 
     async def move(self, offset, yaw: float | None = None, use_gps=True, tolerance=0.25):
         self.logger.info("Starting move")
-        target_yaw = self.attitude[2] + yaw
+        if yaw is None:
+            target_yaw = None
+        else:
+            target_yaw = self.attitude[2] + yaw
         if use_gps:
             target_lat, target_long, target_amsl = relative_gps(self.position_global, offset)
             waypoint = Waypoint(WayPointType.POS_GLOBAL, gps=[target_lat, target_long, target_amsl], yaw=target_yaw)
@@ -1272,11 +1281,22 @@ class DroneMAVSDK(Drone):
         await super().land()
         return await self._land_using_offbord_mode()
 
-    async def _land_using_offbord_mode(self, error_thresh=0.00001, min_time=1):
+    async def _land_using_offbord_mode(self, descent_rate: float = 0.3):
+        """Descend slowly in offboard mode until PX4's land detector reports that the drone has landed.
+
+        Whether the drone has landed is decided by PX4's land detector, not by the altitude no longer decreasing: A
+        brief stall of the descent, i.e. while switching into offboard mode, otherwise looks like a landing while the
+        drone is still in the air. If PX4 doesn't detect the landing in time, PX4's land mode takes over.
+
+        Args:
+            descent_rate: The descent velocity in m/s.
+
+        Returns:
+            True once the drone has landed.
+        """
         self.logger.info("Landing!")
-        ema_alt_error = 0
-        going_down = True
-        old_alt = self.position_ned[2]
+        # Generous timeout from the height above the takeoff point, so the land mode only takes over if something is off
+        timeout = 30 + 2 * max(self.altitude_above_takeoff, 0) / descent_rate
         start_time = time.time()
         target_pos = self._get_pos_ned_yaw()
         if self._flightmode != FlightMode.OFFBOARD:
@@ -1288,15 +1308,14 @@ class DroneMAVSDK(Drone):
             update_freq = self.position_update_rate
         except Exception as e:
             self.logger.debug(f"Couldn't set message rate: {repr(e)}", exc_info=True)
-        while going_down:
-            cur_alt = self.position_ned[2]
-            ema_alt_error = (cur_alt - old_alt) + 0.33 * ema_alt_error
-            if ema_alt_error < error_thresh and time.time() > start_time + min_time:
-                going_down = False
-            old_alt = cur_alt
-            target_pos[2] = cur_alt + 0.4
-            await self.set_setpoint(Waypoint(WayPointType.POS_VEL_NED, pos=target_pos[:3], vel=[0, 0, 0.3], yaw=target_pos[3]))
+        while self.in_air and time.time() < start_time + timeout:
+            target_pos[2] = self.position_ned[2] + 0.4
+            await self.set_setpoint(Waypoint(WayPointType.POS_VEL_NED, pos=target_pos[:3], vel=[0, 0, descent_rate],
+                                             yaw=target_pos[3]))
             await asyncio.sleep(1/update_freq)
+        if self.in_air:
+            self.logger.warning(f"PX4 didn't detect a landing after {timeout:.0f}s, switching to land mode.")
+            return await self._land_using_landmode()
         self.logger.info("Landed!")
         return True
 

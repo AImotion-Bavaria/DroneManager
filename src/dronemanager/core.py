@@ -393,10 +393,12 @@ class DroneManager:
             yaw = [yaw for _ in range(n_drones)]
         if isinstance(yaw_rate, float) and n_drones > 1:
             yaw_rate = [yaw_rate for _ in range(n_drones)]
+        # Without a yaw rate, the drones use their default rate
+        rate_kwargs = {} if yaw_rate is None else {"yaw_rate": yaw_rate}
         return await self._multiple_drone_multiple_params_action(self.drone_class.yaw_to, names,
                                                                  f"Yawing drones {names}", yaw,
-                                                                 schedule=schedule, yaw_rate=yaw_rate, tolerance=tol,
-                                                                 local=local)
+                                                                 schedule=schedule, tolerance=tol, local=local,
+                                                                 **rate_kwargs)
 
     async def fly_to(self, names: str | Collection[str], local: Collection[float] | None = None,
                      gps: Collection[float] | None = None, waypoint: list[Waypoint] | None = None,

@@ -22,14 +22,6 @@ POSITION_TOLERANCE = 0.5
 """How close the drone must get to a target, in meters. Looser than the navigation tolerance, as the drone keeps
 moving slightly after it reports reaching a target."""
 
-LANDING_BUG = ("Offboard landing reports 'Landed!' as soon as the descent briefly stalls, even mid-air, so land() and "
-               "stop() can return while the drone still hovers. Fixed in a follow-up PR.")
-MOVE_WITHOUT_YAW_BUG = ("move() without a yaw crashes: the yaw is added to the current heading even if it is None. "
-                        "Fixed in a follow-up PR.")
-YAW_RATE_BUG = ("yaw_to() without a yaw rate crashes: DroneManager passes None on, which replaces the drone's default "
-                "rate. Fixed in a follow-up PR.")
-HEADING_BUG = "The heading telemetry is never subscribed to, so drone.heading stays NaN. Fixed in a follow-up PR."
-
 
 async def _takeoff(dm: DroneManager, altitude: float = ALTITUDE):
     """Arm the drone and take off.
@@ -50,16 +42,14 @@ async def _takeoff(dm: DroneManager, altitude: float = ALTITUDE):
 
 
 async def _land(dm: DroneManager):
-    """Land the drone with PX4's land mode and wait until it disarms by itself.
-
-    Tests that aren't about landing use PX4's own landing, which isn't affected by :py:data:`LANDING_BUG`.
+    """Land the drone and wait until it disarms by itself.
 
     Args:
         dm: The DroneManager.
     """
     drone = dm.drones[SITL_DRONE]
-    await asyncio.wait_for(dm.change_flightmode(SITL_DRONE, "land"), 30)
-    assert await wait_until(lambda: not drone.in_air, 60)
+    await asyncio.wait_for(dm.land(SITL_DRONE), 90)
+    assert not drone.in_air, "land() returned while the drone was still in the air."
     assert await wait_until(lambda: not drone.is_armed, 30), "PX4 should disarm by itself after landing."
 
 
@@ -83,7 +73,6 @@ async def test_connection_and_telemetry(sitl_dm: DroneManager):
     assert drone.flightmode != FlightMode.UNKNOWN
 
 
-@pytest.mark.xfail(reason=HEADING_BUG, strict=True)
 async def test_heading_telemetry(sitl_dm: DroneManager):
     """The drone reports its heading, matching the yaw of its attitude.
 
@@ -119,7 +108,6 @@ async def test_takeoff_fly_move_yaw_land(sitl_dm: DroneManager):
     await _land(sitl_dm)
 
 
-@pytest.mark.xfail(reason=YAW_RATE_BUG, strict=True)
 async def test_yaw_to_with_default_rate(sitl_dm: DroneManager):
     """Yawing works without specifying a yaw rate.
 
@@ -133,7 +121,6 @@ async def test_yaw_to_with_default_rate(sitl_dm: DroneManager):
     await _land(sitl_dm)
 
 
-@pytest.mark.xfail(reason=MOVE_WITHOUT_YAW_BUG, strict=True)
 async def test_move_without_yaw_keeps_heading(sitl_dm: DroneManager):
     """Moving without a yaw keeps the current heading.
 
@@ -151,7 +138,6 @@ async def test_move_without_yaw_keeps_heading(sitl_dm: DroneManager):
     await _land(sitl_dm)
 
 
-@pytest.mark.xfail(reason=LANDING_BUG, strict=False)
 async def test_land_returns_once_landed(sitl_dm: DroneManager):
     """DroneManager's landing only returns once the drone is on the ground.
 
@@ -230,6 +216,8 @@ async def test_pause_holds_queue_until_resumed(sitl_dm: DroneManager):
 async def test_immediate_command_replaces_queue(sitl_dm: DroneManager):
     """A command that isn't scheduled cancels the current action and clears the queue.
 
+    Callers waiting for the replaced actions get a CancelledError as their result instead of waiting forever.
+
     Args:
         sitl_dm: DroneManager connected to the SITL drone.
     """
@@ -238,9 +226,14 @@ async def test_immediate_command_replaces_queue(sitl_dm: DroneManager):
     start = drone.position_ned.copy()
     far_away = asyncio.create_task(sitl_dm.fly_to(SITL_DRONE, local=start + np.array([40, 0, 0]), yaw=0,
                                                   schedule=True))
+    queued = asyncio.create_task(sitl_dm.fly_to(SITL_DRONE, local=start + np.array([0, 40, 0]), yaw=0,
+                                                schedule=True))
     await asyncio.sleep(2)
-    assert await asyncio.wait_for(sitl_dm.fly_to(SITL_DRONE, local=start, yaw=0), 60) == [True]
-    assert far_away.done()
+    assert len(drone.action_queue) == 1
+    assert await asyncio.wait_for(sitl_dm.fly_to(SITL_DRONE, local=start, yaw=0, schedule=False), 60) == [True]
+    for replaced in (far_away, queued):
+        results = await asyncio.wait_for(replaced, 5)
+        assert isinstance(results[0], asyncio.CancelledError)
     assert drone.position_ned == pytest.approx(start, abs=POSITION_TOLERANCE)
     await _land(sitl_dm)
 
@@ -263,7 +256,6 @@ async def test_flight_modes(sitl_dm: DroneManager):
     assert await wait_until(lambda: not drone.is_armed, 30)
 
 
-@pytest.mark.xfail(reason=LANDING_BUG, strict=False)
 async def test_stop_lands_and_disarms(sitl_dm: DroneManager):
     """Stopping a flying drone lands and disarms it.
 
