@@ -9,6 +9,7 @@ import logging
 import pathlib
 import subprocess
 from subprocess import CompletedProcess, CalledProcessError
+import sys
 
 import dronemanager.core
 from dronemanager.plugin import Plugin, DOC_DIR, SRC_DIR
@@ -107,6 +108,8 @@ class ScriptsPlugin(Plugin):
 def _script_function(script_path: str, script_args: list[str]) -> CompletedProcess:
     """Runs the script in a subprocess.
 
+    The script is run with the same Python interpreter as DroneManager, so it has access to the same packages.
+
     Args:
         script_path: The path to the script.
         script_args: Arguments to the script.
@@ -114,7 +117,7 @@ def _script_function(script_path: str, script_args: list[str]) -> CompletedProce
     Returns:
         The process result.
     """
-    input_args = ["python3", script_path]
+    input_args = [sys.executable, script_path]
     input_args.extend(script_args)
     result = subprocess.run(input_args, capture_output=True, text=True, check=True)
     return result

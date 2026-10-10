@@ -18,9 +18,9 @@ The type column follows ``MAV_PARAM_TYPE``: Types 1 to 8 are integers, 9 and 10 
 comments. Mission Planner style ``NAME,VALUE`` lines are also accepted when reading, in which case the type is taken
 from the drone.
 
-By default, the files are stored in the "Parameters" folder of the DroneManager directory in the user documents, see
-:py:data:`PARAM_DIR`. A different directory can be set with the ``directory`` entry in the plugin settings of the
-configuration file.
+By default, the files are stored in the "drone_parameters" folder of the DroneManager directory in the user
+documents, see :py:data:`PARAM_DIR`. A different directory can be set with the ``directory`` entry in the plugin
+settings of the configuration file.
 
 Drone specific parameters
 -------------------------
