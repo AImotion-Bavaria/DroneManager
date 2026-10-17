@@ -586,7 +586,7 @@ async def test_load_with_drone_manager(dm: DroneManager, tmp_path: pathlib.Path)
         dm: DroneManager instance.
         tmp_path: Temporary directory.
     """
-    assert PARAM_DIR == DOC_DIR.joinpath("Parameters")
+    assert PARAM_DIR == DOC_DIR.joinpath("drone_parameters")
     dm.config.plugin_settings["parameters"] = {"directory": str(tmp_path / "params"), "extra_excludes": ["X_*"]}
     await dm.load("parameters")
     plugin = getattr(dm, "parameters")

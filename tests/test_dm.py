@@ -1,13 +1,119 @@
 """Module to test core DroneManager functionality."""
+import json
+import pathlib
+
+import pytest
+
 from dronemanager.core import DMConfig, DroneManager
 from dronemanager.utils import get_config, heading_ned, heading_gps, offset_from_gps, ned_from_gps, get_free_port, \
-    parse_address
+    parse_address, ConfigError, DEFAULT_CONFIG_FILE
 
 
 def test_config():
     """Test that the config can be loaded."""
     conf = DMConfig.from_file(get_config().as_posix())
     assert conf.mav_system_id is not None
+
+
+async def test_installed_config_matches_plugins(dm: DroneManager):
+    """The installed configuration fits this version of DroneManager.
+
+    Fails with the invalid entries if the configuration is from an older version, for example after an upgrade.
+
+    Args:
+        dm: DroneManager instance, using the installed configuration.
+    """
+    errors = dm.check_plugin_settings()
+    assert not errors, "\n".join(str(error) for error in errors)
+
+
+def _write_config(path: pathlib.Path, change: dict | None = None, remove: list[str] | None = None,
+                  text: str | None = None) -> str:
+    """Write a modified copy of the default configuration.
+
+    Args:
+        path: Directory for the file.
+        change: Top-level entries to add or replace.
+        remove: Top-level entries to remove.
+        text: Raw file content, replaces the default configuration.
+
+    Returns:
+        The path of the configuration file.
+    """
+    config_file = path.joinpath("config.json")
+    if text is None:
+        config = json.loads(DEFAULT_CONFIG_FILE.read_text())
+        config.update(change or {})
+        for key in remove or []:
+            config.pop(key)
+        text = json.dumps(config)
+    config_file.write_text(text)
+    return config_file.as_posix()
+
+
+@pytest.mark.parametrize("kwargs, message", [
+    ({"text": '{"drones": [}'}, "JSON: Expecting value at line 1, column 13"),
+    ({"remove": ["mav_system_id"]}, "mav_system_id: missing"),
+    ({"change": {"mav_system_id": "246"}}, 'mav_system_id: must be an integer, not "246"'),
+    ({"change": {"testing": 1}}, "testing: must be true or false, not 1"),
+    ({"change": {"drones": {}}}, "drones: must be a list of drone configurations"),
+    ({"change": {"drones": [{"drone_name": "tom"}]}}, "drones[0]: missing 'address'"),
+    ({"change": {"plugin_settings": {"optitrack": ["x", "z", "-y"]}}},
+     "plugin_settings.optitrack: must be an object with the plugin's arguments"),
+])
+def test_invalid_config_file(tmp_path: pathlib.Path, kwargs: dict, message: str):
+    """An invalid configuration file raises a ConfigError naming the file and the problem.
+
+    Args:
+        tmp_path: Temporary directory.
+        kwargs: How to change the default configuration.
+        message: Expected part of the error message.
+    """
+    config_file = _write_config(tmp_path, **kwargs)
+    with pytest.raises(ConfigError) as e:
+        DMConfig.from_file(config_file)
+    assert message in str(e.value)
+    assert config_file in str(e.value)
+    assert str(DEFAULT_CONFIG_FILE) in str(e.value)
+
+
+@pytest.mark.parametrize("settings, message", [
+    ({"optitrack": {"axes": ["z", "-x", "-y"]}},
+     "plugin_settings.optitrack: unknown entry axes (valid: server_ip, local_ip, world_axes, body_axes, log_frames)"),
+    ({"controllers": {"auto_drone": True, "auto_set": True}},
+     "plugin_settings.controllers: unknown entries auto_drone, auto_set"),
+    ({"controllers": {"mappings": {"PS4": {"name": "PS4"}}}}, "plugin_settings.controllers.mappings.PS4: missing"),
+    ({"controllers": {"default_mappings": {"PS4 Controller": "PS4"}}},
+     "plugin_settings.controllers.default_mappings.PS4 Controller: no mapping named 'PS4'"),
+])
+async def test_invalid_plugin_settings(dm: DroneManager, settings: dict, message: str):
+    """Plugin settings that don't match the plugin are reported by the config check and when loading the plugin.
+
+    Args:
+        dm: DroneManager instance.
+        settings: The invalid plugin settings.
+        message: Expected part of the error message.
+    """
+    dm.config.plugin_settings = settings
+    errors = dm.check_plugin_settings()
+    assert len(errors) == 1
+    assert message in str(errors[0])
+    plugin = next(iter(settings))
+    assert not await dm.load(plugin)
+    assert plugin not in dm.plugins
+
+
+async def test_unknown_default_plugin(dm: DroneManager):
+    """A default plugin that doesn't exist is reported by the config check.
+
+    Args:
+        dm: DroneManager instance.
+    """
+    dm.config.default_plugins = ["missions"]
+    dm.config.plugin_settings = {}
+    errors = dm.check_plugin_settings()
+    assert len(errors) == 1
+    assert "default_plugins: no plugin named 'missions'" in str(errors[0])
 
 
 async def test_dm_plugins(dm: DroneManager):
@@ -22,7 +128,7 @@ async def test_dm_plugins(dm: DroneManager):
         available_but_not_loaded = [item for item in dm.plugin_options if item not in dm.plugins]
         for plugin in available_but_not_loaded:
             res = await dm.load(plugin)
-            assert res is not None, f"Failed to load {plugin}!"
+            assert res, f"Failed to load {plugin}!"
         for plugin in dm.plugins:
             plugin_obj = getattr(dm, plugin, None)
             if plugin_obj:

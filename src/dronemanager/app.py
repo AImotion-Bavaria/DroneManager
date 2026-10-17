@@ -187,6 +187,8 @@ class CommandScreen(Screen):
         asyncio.create_task(self._default_plugin_loading())
 
     async def _default_plugin_loading(self):
+        for error in self.dm.check_plugin_settings():
+            self.logger.error(str(error))
         plugin_tasks = []
         for plugin_name in self.dm.config.default_plugins:
             plugin_tasks.append(asyncio.create_task(self.dm.load(plugin_name)))
