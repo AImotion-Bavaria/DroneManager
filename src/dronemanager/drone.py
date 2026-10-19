@@ -14,7 +14,7 @@ from typing import Coroutine
 
 import numpy as np
 
-from mavsdk.asyncio import Mavsdk, Configuration, System
+from mavsdk.asyncio import Mavsdk, System
 from mavsdk.asyncio.plugins.telemetry import FlightMode as MAVSDKFlightMode
 from mavsdk.asyncio.plugins.telemetry import FixType as MAVSDKFixType
 from mavsdk.asyncio.plugins.telemetry import StatusTextType, TelemetryAsync
@@ -26,11 +26,11 @@ from mavsdk.asyncio.plugins.mavlink_direct import MavlinkMessage, MavlinkDirectA
 from mavsdk.asyncio.plugins.param import ParamAsync
 from mavsdk.asyncio.plugins.camera import CameraAsync
 from mavsdk.asyncio.plugins.gimbal import GimbalAsync
-import mavsdk.logging
+
 
 from dronemanager.utils import dist_ned, dist_gps, relative_gps, coroutine_awaiter
 from dronemanager.utils import parse_address, COMMON_FORMATTER
-from dronemanager.utils import LOG_DIR, ForwardingHandler
+from dronemanager.utils import LOG_DIR
 from dronemanager.navigation.core import WayPointType, Waypoint, PathGenerator, PathFollower, Fence
 from dronemanager.navigation.directtargetgenerator import DirectTargetGenerator
 from dronemanager.navigation.gmp3generator import GMP3Generator
@@ -565,20 +565,18 @@ class DroneMAVSDK(Drone):
 
     MAV_LOGGERS = set()
 
-    def __init__(self, name: str, gcs_ident, mavsdk_server_address: str | None = None, mavsdk_server_port: int = 50051,
-                 config: DroneConfig | None = None):
+    def __init__(self, name: str, gcs_ident, config: DroneConfig | None = None, mavsdk = None):
         # TODO: Currently exceptions in this block are not logged to drone manager, as the handler is added only after
         #  connecting.
         super().__init__(name, gcs_ident, config=config)
         self.system: System = None
-        self.server_addr = mavsdk_server_address
-        self.server_port = mavsdk_server_port
+        self.mavsdk: Mavsdk = mavsdk
         self._server_process: Popen | None = None
         self._is_connected: bool = False
         self._is_armed: bool = False
         self._flightmode: FlightMode = FlightMode.UNKNOWN
         self._in_air: bool = False
-        self._gps_info: FixType = None
+        self._gps_info: FixType = FixType.NO_GPS
         self._position_g: np.ndarray = np.zeros((4,))  # Latitude, Longitude, AMSL, Relative altitude to takeoff
         self._position_ned: np.ndarray = np.zeros((3,))     # NED
         self._velocity: np.ndarray = np.zeros((3,))         # NED
@@ -595,7 +593,6 @@ class DroneMAVSDK(Drone):
 
         # Temporary attributes for new mavsdk version
         self._conn_handle = None
-        self._mavsdk: Mavsdk = None
         self._mavdirect: MavlinkDirectAsync = None
         self._mavparam: ParamAsync = None
         self._mavtelem: TelemetryAsync = None
@@ -690,19 +687,7 @@ class DroneMAVSDK(Drone):
     def batteries(self) -> dict[int, Battery]:
         return self._batteries
 
-    def _log_callback(self, level, message, file, line):
-        if level == 0:
-            log_level = logging.DEBUG
-        elif level == 1:
-            log_level = logging.INFO
-        elif level == 2:
-            log_level = logging.WARN
-        else:
-            log_level = logging.ERROR
-        self.logger.log(log_level, f"{message}, {file, line}")
-        return True
-
-    async def connect(self, drone_address, *args, log_telemetry=None, **kwargs) -> bool:
+    async def connect(self, drone_address, *args, log_telemetry=None, mavsdk=None) -> bool:
         # If we are on windows, we can't rely on the MAVSDK to have the binary installed.
         # If we use serial, loc is the path and appendix the baudrate, if we use udp it is IP and port
         scheme, loc, appendix = parse_address(string=drone_address)
@@ -717,19 +702,17 @@ class DroneMAVSDK(Drone):
             self.config.log_telemetry = log_telemetry
 
         try:
-            gcs_system_id, gcs_component_id = self.gcs_ident
-            # TODO: Rework discovery, so we can have passive discovery
-            if len(self.MAV_LOGGERS) == 0:
-                self.logger.info("Setting up MAV Logger...")
-                mavsdk.logging.log_subscribe(self._log_callback)
-                self.logger.info("Finished setting up MAV Logger!")
-            self.MAV_LOGGERS.add(self.name)
-            self._mavsdk = Mavsdk(Configuration.create_manual(gcs_system_id, gcs_component_id, True))
-            #self.system = System(mavsdk_server_address=self.server_addr, port=self.server_port,
-            #                     sysid=gcs_system_id, compid=gcs_component_id)
-            self._conn_handle = await self._mavsdk.add_any_connection(mavsdk_passthrough_string)
-
-            self.system = await self._mavsdk.first_autopilot(10.0)
+            old_ids = [await system.get_system_id() for system in await mavsdk.get_systems()]
+            self._conn_handle = await mavsdk.add_any_connection(mavsdk_passthrough_string)
+            async for _ in mavsdk.on_new_system():
+                break
+            for system in await mavsdk.get_systems():
+                system_id = await system.get_system_id()
+                if system_id not in old_ids:
+                    self.system = system
+            #self.system = await mavsdk.first_autopilot(10.0)
+            while not await self.system.is_connected():
+                await asyncio.sleep(0.1)
             if await self.system.is_connected():
 
                 self._mavdirect = MavlinkDirectAsync(self.system)
@@ -752,10 +735,15 @@ class DroneMAVSDK(Drone):
                 self._running_tasks.add(param_load_task)
                 self._running_tasks.add(param_load_task_awaiter)
                 self.logger.debug(f"Connected!")
+                self.logger.info(f"Connected to {await self.system.get_system_id()}")
                 self._is_connected = True
                 return True
+            else:
+                self.logger.info("Failed to await connected state?")
         except Exception as e:
             self.logger.debug(f"Exception during connection: {repr(e)}", exc_info=True)
+            if self._conn_handle is not None:
+                await mavsdk.remove_connection(self._conn_handle)
         return False
 
     def add_message_callback(self, message_name, callback):
@@ -796,7 +784,7 @@ class DroneMAVSDK(Drone):
             self._ack_listeners[msg_tuple] = [fut]
         return fut
 
-    def send_command(self, command_msg_id, target_component_id, confirmation, param1=0, param2=0, param3=0, param4=0, param5=0, param6=0, param7=0) -> asyncio.Future[bool]:
+    def send_command(self, command_msg_id, target_component_id, confirmation, param1=0, param2=0, param3=0, param4=0, param5=0, param6=0, param7=0):
         drone_system_id, drone_component_id = self.drone_identifier
         system_id, component_id = self.gcs_ident
         fields = {
@@ -1526,13 +1514,9 @@ class DroneMAVSDK(Drone):
             if self.path_follower.is_active:
                 await self.path_follower.deactivate()
             self.path_follower.close()
-        # Close the mav handler
-        if self.name in self.MAV_LOGGERS:
-            self.MAV_LOGGERS.remove(self.name)
+        if self._conn_handle is not None:
+            await self.mavsdk.remove_connection(self._conn_handle)
         # Cleanup other stuff that doesn't reliably get cleaned up otherwise
-        if self._mavsdk is not None:
-            await self._mavsdk.remove_connection(self._conn_handle)
-            self._mavsdk.destroy()
         await super().stop_execution()
 
     async def stop(self):

@@ -330,7 +330,9 @@ class Camera:
         return res
 
     async def init_cam_info(self):
-        cam_info, request_ok = await self.drone.request_message(259, "CAMERA_INFORMATION", self.camera_id)
+        cam_info, request_ok = self.drone.request_message(259, "CAMERA_INFORMATION", self.camera_id)
+        request_ok = await request_ok
+        cam_info = await cam_info
         if request_ok != 0:
             self.logger.warning(f"Camera information request failed with MAV code {request_ok}")
         if not cam_info:

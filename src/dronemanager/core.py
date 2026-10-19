@@ -15,11 +15,14 @@ from typing import Callable
 import dronemanager
 from dronemanager.drone import Drone, parse_address, DroneConfigs, DroneConfig
 from dronemanager.navigation.rectlocalfence import RectLocalFence
-from dronemanager.utils import COMMON_FORMATTER, get_free_port, LOG_DIR, get_config
+from dronemanager.utils import COMMON_FORMATTER, LOG_DIR, get_config
 from dronemanager.navigation.core import Waypoint, Fence
 from dronemanager.plugin import PluginLoader
 
 import logging
+
+import mavsdk.logging
+from mavsdk.asyncio import Mavsdk, Configuration
 
 
 # TODO: Fence class discovery
@@ -134,13 +137,32 @@ class DroneManager:
             console_handler.setFormatter(COMMON_FORMATTER)
             self.logger.addHandler(console_handler)
 
+        self._mavsdk = self.launch_mavsdk()
+
         self.plugin_loader = PluginLoader(self, self.logger, "PluginLoader")
         self.logger.info(f"Starting DroneManager version {dronemanager.__version__}")
 
+    def launch_mavsdk(self):
+        # TODO: Rework discovery, so we can have passive discovery
+        self.logger.info("Setting up MAV Logger...")
+        mavsdk.logging.log_subscribe(self._log_callback)
+        self.logger.info("Finished setting up MAV Logger!")
+        return Mavsdk(Configuration.create_manual(self.system_id, self.component_id, True))
+
+    def _log_callback(self, level, message, file, line):
+        if level == 0:
+            log_level = logging.DEBUG
+        elif level == 1:
+            log_level = logging.INFO
+        elif level == 2:
+            log_level = logging.WARN
+        else:
+            log_level = logging.ERROR
+        self.logger.log(log_level, f"{message}, {file, line}")
+        return True
+
     async def connect_to_drone(self,
                                name: str,
-                               mavsdk_server_address: str | None = None,
-                               mavsdk_server_port: int | None = None,
                                drone_address: str| None = None,
                                timeout: float = 30,
                                telemetry_frequency: float | None = None,
@@ -164,8 +186,6 @@ class DroneManager:
                 if name in self.drones:
                     self.logger.warning(f"A drone called {name} already exists. Each drone must have a unique name.")
                     return False
-                if not mavsdk_server_address:
-                    mavsdk_server_port = get_free_port()
                 # Check that we don't already have this drone connected.
                 for other_name in self.drones:
                     other_drone = self.drones[other_name]
@@ -185,14 +205,14 @@ class DroneManager:
                         self.logger.error("Can't have a telemetry rate of less than 2!")
                     else:
                         config.position_rate = telemetry_frequency
-                drone = self.drone_class(name, (self.system_id, self.component_id), mavsdk_server_address, mavsdk_server_port, config=config)
+                drone = self.drone_class(name, (self.system_id, self.component_id), config=config, mavsdk=self._mavsdk)
                 connected = None
                 try:
                     if scheme == "serial":
                         self.logger.info(f"Trying to connect to drone {name} @{scheme}://{parsed_addr} with baud {parsed_port}")
                     else:
                         self.logger.info(f"Trying to connect to drone {name} @{scheme}://{parsed_addr}:{parsed_port}")
-                    connected = await asyncio.wait_for(drone.connect(drone_address, log_telemetry=log_telemetry),
+                    connected = await asyncio.wait_for(drone.connect(drone_address, log_telemetry=log_telemetry, mavsdk=self._mavsdk),
                                                        timeout)
                 except (CancelledError, TimeoutError, OSError, socket.gaierror, AssertionError) as e:
                     if isinstance(e, CancelledError):
@@ -524,6 +544,7 @@ class DroneManager:
     async def close(self):
         await self.disconnect(self.drones)
         await self.plugin_loader.close()
+        self._mavsdk.destroy()
 
 # PLUGINS ##############################################################################################################
 

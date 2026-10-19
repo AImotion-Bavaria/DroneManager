@@ -12,7 +12,7 @@ authors = [
     {name="Tim Drouven", email="tim.drouven@thi.de"}, ]
 description = "Package to connect to and control multiple drones, either programmatically or using a CLI."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "numpy",
     "textual==8.2.*",
