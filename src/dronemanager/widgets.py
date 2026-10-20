@@ -1,10 +1,10 @@
 """Custom textual widgets."""
-import queue
-from queue import Queue
 import argparse
 import asyncio
 import logging
 import math
+import queue
+from queue import Queue
 from rich.text import Text
 from textual.binding import Binding
 from textual.widgets import Input, Log, Static
