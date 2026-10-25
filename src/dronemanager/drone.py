@@ -1338,7 +1338,7 @@ class DroneMAVSDK(Drone):
                                                   AngleBody(*rotation),
                                                   covariance,
                                                   0)
-        if self.is_connected and not self.should_stop:
+        if self.is_connected:
             res = await self._error_wrapper(self.system.mocap.set_vision_position_estimate, MocapError,
                                             vis_pos_estimate, reraise=True)
             return res
