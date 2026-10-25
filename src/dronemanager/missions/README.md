@@ -125,8 +125,8 @@ is actually on the wire before touching any EKF parameter.
 | 1 | on | `arm RomulusIndoor` · `takeoff RomulusIndoor -a 1.1` · hover · `land RomulusIndoor` | holds ≈ 1.5 m, drifts < 0.1 m |
 | 2 | on | takeoff · `flyto RomulusIndoor 0 0 -1.5` · `flyto RomulusIndoor -1.26 -1.44 -1.5` · land | over the target (RB1 vs RB2 < 0.15 m in Motive), then back |
 | 3 | on | over the target: `fence RomulusIndoor -1.2 1.2 -1.2 1.2 -1.8 0.5` · `flyto RomulusIndoor 1.5 0 -1.5` · `flyto RomulusIndoor 1.0 0 -1.5` | the first is REFUSED ("Invalid target position… fence") and nothing moves; the second flies |
-| 4 | on | hovering at 0 0 −1.5: `mission-load squarecapture --name sq` · `sq-add RomulusIndoor` · `sq-wdtest --trip_radius 1.0 --to_n 1.5 --to_e 0 --to_height 1.5` | `WATCHDOG TRIP: radius` near 1.0, lands in place, `WATCHDOG TEST PASSED` |
-| 4b | on | `sq-wdtest --trip_height 1.6 --to_n 0 --to_e 0 --to_height 1.8` | trips near 1.6 m and lands |
+| 4 | on | hovering at 0 0 −1.5: `mission-load squarecapture --name sq` · `sq-add RomulusIndoor` · `sq-wdtest --trip_radius 1.0` (flies to the default 1.5 0 at 1.5 m) | `WATCHDOG TRIP: radius` near 1.0, lands in place, `WATCHDOG TEST PASSED` |
+| 4b | on | `sq-wdtest --trip_height 1.6 --to_n 0 --to_height 1.8` | trips near 1.6 m and lands |
 | 5 | off | `sq-check --indoor yes` · `sq-indoor-plan` | PASSED; EKF vs mocap ≤ 0.10 m / 5°; the plan is inside the limits |
 | 6 | on | `sq-indoor indoor01` | 30 s still → ≈ 1.1 m → 8 × 8 captures → return → land, `done` |
 

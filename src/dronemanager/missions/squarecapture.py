@@ -17,7 +17,7 @@ INDOOR, under motion capture (the EKF fuses OptiTrack; no GPS, no compass):
 
     sq-check --indoor yes         # EKF must agree with the mocap pose
     sq-indoor-plan                # 1 m ring about mocap (0, 0), 1.1 m high
-    sq-wdtest --trip_radius 1.0 --to_n 1.5 --to_e 0 --to_height 1.5
+    sq-wdtest --trip_radius 1.0   # from a hover over the target
     sq-indoor indoor01            # the orbit, recorded, inside a watchdog
 
 DIVISION OF LABOUR. This file only sequences flight and capture. The geometry
@@ -780,7 +780,8 @@ class SquareCaptureMission(Mission):
         if drone is not None:
             self._mocap_check(drone, ind)
 
-    async def watchdog_test(self, to_n: float, to_e: float, to_height: float,
+    async def watchdog_test(self, to_n: float = 1.5, to_e: float = 0.0,
+                            to_height: float = 1.5,
                             trip_radius: float = 0.0, trip_height: float = 0.0,
                             center_n: float = 0.0, center_e: float = 0.0,
                             fence_radius: float = 1.9):
@@ -792,6 +793,10 @@ class SquareCaptureMission(Mission):
         a landing in place before the point is reached; reaching it is a FAIL
         and the aircraft is left hovering there for the pilot. Refuses any
         point that is not safe to reach should the watchdog not fire.
+
+        The default point (1.5, 0) at 1.5 m is the radius test from over the
+        target: `sq-wdtest --trip_radius 1.0`. The height test names its own:
+        `sq-wdtest --trip_height 1.6 --to_n 0 --to_height 1.8`.
         """
         if self._running():
             self.logger.warning("Mission %s is already flying.", self.name)
