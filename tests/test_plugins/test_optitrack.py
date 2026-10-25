@@ -1,14 +1,16 @@
 """Tests for the optitrack plugin."""
 import asyncio
+import functools
 import logging
 import numpy as np
 import pytest
+import threading
 from scipy.spatial.transform import Rotation
 from typing import AsyncGenerator, Any, Callable
 from unittest.mock import Mock, patch
 
 from dronemanager.core import DroneManager
-from dronemanager.drone import MocapError
+from dronemanager.drone import DroneMAVSDK, MocapError
 from dronemanager.plugins.NatNet.MoCapData import generate_mocap_data
 from dronemanager.plugins.optitrack import CoordinateConversion
 
@@ -278,9 +280,8 @@ async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock
     frame_counter = do_callback(frame_counter)  # Do the callback once so we have tracks
     await optitrack.add_drone(mock_drone.name, 0)
 
-    # Test Mocap errors.
-    mock_drone.system.mocap.set_vision_position_estimate.side_effect = \
-        MocapError(2, "Test exception, please ignore")
+    # Test Mocap errors. The mock drone stubs send_external_tracking_data, so the error has to come from the stub.
+    mock_drone.send_external_tracking_data.side_effect = MocapError(2, "Test exception, please ignore")
     frame_counter = do_callback(frame_counter)
     await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
     assert optitrack._err_count == 1
@@ -291,3 +292,55 @@ async def test_optitrack_errors(dm_with_optitrack_mock: tuple[DroneManager, Mock
     do_callback(frame_counter)
     await asyncio.sleep(0.1)
     assert len(optitrack._drone_id_mapping) == 0
+
+
+async def test_send_external_tracking_data_sends(mock_drone_getter: Callable[[int], Mock]):
+    """The real DroneMAVSDK.send_external_tracking_data must reach MAVSDK while connected.
+
+    The mock drone stubs the method itself, so this runs the real one on the mock. 44e1ea1 guarded it with
+    ``not self.should_stop``, a threading.Event that is always truthy, and dropped every frame silently.
+
+    Args:
+        mock_drone_getter: A function to get mocked drone objects for tests.
+    """
+    mock_drone = mock_drone_getter(1)
+    mock_drone.should_stop = threading.Event()
+    mock_drone._error_wrapper = functools.partial(DroneMAVSDK._error_wrapper, mock_drone)
+    mocap = mock_drone.system.mocap.set_vision_position_estimate
+
+    res = await DroneMAVSDK.send_external_tracking_data(mock_drone, [1.0, 2.0, -3.0], [0.0, 0.0, 0.5])
+    assert res is True
+    mocap.assert_awaited_once()
+    estimate = mocap.await_args.args[0]
+    assert (estimate.position_body.x_m, estimate.position_body.y_m, estimate.position_body.z_m) == (1.0, 2.0, -3.0)
+    assert estimate.angle_body.yaw_rad == 0.5
+
+    mock_drone.is_connected = False
+    res = await DroneMAVSDK.send_external_tracking_data(mock_drone, [1.0, 2.0, -3.0], [0.0, 0.0, 0.5])
+    assert res is False
+    mocap.assert_awaited_once()
+
+
+async def test_optitrack_warns_on_refused_send(dm_with_optitrack_mock: tuple[DroneManager, Mock],
+                                               mock_drone_getter: Callable[[int], Mock],
+                                               caplog: pytest.LogCaptureFixture):
+    """A send that returns False must be logged and counted, not dropped silently.
+
+    Args:
+        dm_with_optitrack_mock: The DroneManager instance with loaded optitrack plugin.
+        mock_drone_getter: A function to get mocked drone objects for tests.
+        caplog: Pytest log capture.
+    """
+    mock_drone = mock_drone_getter(1)
+    dm, client = dm_with_optitrack_mock
+    optitrack = getattr(dm, "optitrack")
+    dm.drones[mock_drone.name] = mock_drone
+    mock_drone.send_external_tracking_data.return_value = False
+
+    optitrack._new_frame_callback({"mocap_data": generate_mocap_data(0)})
+    await optitrack.add_drone(mock_drone.name, 0)
+    with caplog.at_level(logging.WARNING):
+        optitrack._new_frame_callback({"mocap_data": generate_mocap_data(1)})
+        await asyncio.sleep(0.1)  # Need a little sleep so the rigid frame processing can happen.
+    assert optitrack._err_count == 1
+    assert "Tracking data was not sent to the drone!" in caplog.text

@@ -420,6 +420,12 @@ class OptitrackPlugin(Plugin):
                 res = await asyncio.wrap_future(task)
                 if res:
                     self._err_count = 0
+                else:
+                    # A refused send is as fatal as an exception for the drone's position estimate, but raises nothing:
+                    # 44e1ea1 dropped every frame this way while the log stayed clean.
+                    if self._err_count % self.log_every == 0:
+                        logger.warning("Tracking data was not sent to the drone!")
+                    self._err_count += 1
         except asyncio.CancelledError:
             pass
         except Exception as e:
