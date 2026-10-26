@@ -175,7 +175,11 @@ class DroneOverview(Static):
         asyncio.create_task(self.update_display())
 
     def _text_name(self):
-        string = self.column_formats[0].format(self.drone.name)
+        if len(self.drone.name) > self.COLUMN_WIDTHS[0]:
+            display_name = self.drone.name[:(self.COLUMN_WIDTHS[0]-3)] + "..."
+        else:
+            display_name = self.drone.name
+        string = self.column_formats[0].format(display_name)
         return Text(string, style="bold")
 
     def _text_empty(self, column):
