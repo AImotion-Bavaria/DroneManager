@@ -4,7 +4,6 @@ import json
 import os
 import struct
 import requests
-import math
 from lxml import etree
 
 from mavsdk.asyncio.plugins.camera import CameraError
@@ -257,11 +256,8 @@ class Camera:
         self._running_tasks.add(asyncio.create_task(coroutine_awaiter(capture_info_task, self.logger)))
 
     @property
-    def drone(self) -> dronemanager.drone.DroneMAVSDK | None:
-        try:
-            return self.dm.drones[self.drone_name]
-        except KeyError:
-            return None
+    def drone(self) -> dronemanager.drone.DroneMAVSDK:
+        return self.dm.drones[self.drone_name]
 
     async def _capture_info_updates(self):
         async for capture_info in self.dm.drones[self.drone_name]._mavcamera.subscribe_capture_info():
@@ -330,7 +326,9 @@ class Camera:
         return res
 
     async def init_cam_info(self):
-        cam_info, request_ok = await self.drone.request_message(259, "CAMERA_INFORMATION", self.camera_id)
+        cam_info, request_ok = self.drone.request_message(259, "CAMERA_INFORMATION", self.camera_id)
+        request_ok = await request_ok
+        cam_info = await cam_info
         if request_ok != 0:
             self.logger.warning(f"Camera information request failed with MAV code {request_ok}")
         if not cam_info:
