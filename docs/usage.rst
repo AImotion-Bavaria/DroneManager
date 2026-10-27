@@ -231,7 +231,7 @@ Parameter files
 
 Files are written in the QGroundControl ``.params`` format, so they can also be opened in QGroundControl and Mission
 Planner. Mission Planner style files with ``NAME,VALUE`` lines can be read as well. They are saved in the
-``Parameters`` folder of the DroneManager directory in your documents, next to the ``Logs`` folder and the
+``drone_parameters`` folder of the DroneManager directory in your documents, next to the ``Logs`` folder and the
 configuration file. Use ``param-list`` to see them.
 
 .. _drone_specific_parameters:
@@ -429,6 +429,12 @@ config file and they will be loaded automatically with just ``connect tom``. If 
 line, it is used instead of the config file. The file is left unchanged by this.
 The speed, acceleration and jerk limits are used for autonomous navigation functions by default.
 There is one special drone entry, which is called "default". These parameters are used when no matching name is found.
+
+DroneManager checks the configuration when it starts: Invalid JSON, missing or wrongly typed entries, and plugin
+settings that don't match the plugin's arguments are reported with the entry and the problem. This often happens with a
+configuration from an older version after an upgrade. Compare it with the default configuration
+``resources/config.json`` in the DroneManager package and update the reported entries. The test suite also checks the
+installed configuration.
 
 
 Common Issues

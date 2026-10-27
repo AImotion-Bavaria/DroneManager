@@ -312,16 +312,17 @@ def test_mapping_functions(ps4_mapping: InputMapping):
 
 
 async def test_mapping_saving_and_loading(dm_with_controller: tuple[DroneManager, MagicMock],
-                                          ps4_mapping: InputMapping):
+                                          ps4_mapping: InputMapping, tmp_path: pathlib.Path):
     """Test adding a mapping, saving it, and then loading it again.
 
     Args:
         dm_with_controller: A DroneManager instance with loaded external plugin.
         ps4_mapping: An InputMapping matching a PS4 controller used for testing.
+        tmp_path: Temporary directory for the saved config.
     """
     manager, mock_pygame = dm_with_controller
     controller_plugin = getattr(manager, "controllers")
-    test_config_file_path = pathlib.Path("tests/test_config.json")
+    test_config_file_path = tmp_path.joinpath("test_config.json")
 
     # Adding a new mapping
     test_mapping = copy.deepcopy(ps4_mapping)
@@ -346,9 +347,6 @@ async def test_mapping_saving_and_loading(dm_with_controller: tuple[DroneManager
     assert "Test_mapping" in controller_plugin.mappings
     controller_plugin.mappings["Test_mapping"].name = ps4_mapping.name
     assert ps4_mapping == controller_plugin.mappings["Test_mapping"]
-
-    # Remove test config file.
-    test_config_file_path.unlink()
 
 
 class MockEvent:

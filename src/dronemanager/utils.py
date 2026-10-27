@@ -65,6 +65,33 @@ _CONFIG_FILE = DOC_DIR.joinpath("config.json")
 :meta hide-value:
 """
 
+DEFAULT_CONFIG_FILE = files("dronemanager").joinpath("resources/config.json")
+""" The default configuration shipped with DroneManager.
+
+:meta hide-value:
+"""
+
+
+class ConfigError(Exception):
+    """An entry in the configuration file is invalid.
+
+    The message names the configuration file, the entry and the problem, and points to the default configuration.
+    """
+
+    def __init__(self, entry: str, problem: str, file: str | pathlib.Path | None = None):
+        """Create the ConfigError.
+
+        Args:
+            entry: The invalid entry, i.e. ``plugin_settings.optitrack``.
+            problem: What is wrong with the entry.
+            file: The configuration file. Defaults to the current configuration file.
+        """
+        self.entry = entry
+        self.problem = problem
+        self.file = _CONFIG_FILE if file is None else file
+        super().__init__(f"Invalid configuration in {self.file}: {entry}: {problem}. "
+                         f"Compare with the default configuration at {DEFAULT_CONFIG_FILE}.")
+
 
 def get_config() -> pathlib.Path:
     """Returns the location of the configuration json.
@@ -75,12 +102,8 @@ def get_config() -> pathlib.Path:
         The path to the config file.
     """
     if not _CONFIG_FILE.exists():
-        default_config = files("dronemanager").joinpath(
-            "resources/config.json"
-        )
-
         _CONFIG_FILE.write_text(
-            default_config.read_text(),
+            DEFAULT_CONFIG_FILE.read_text(),
             encoding="utf-8",
         )
 

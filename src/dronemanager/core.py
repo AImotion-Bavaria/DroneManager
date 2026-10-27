@@ -14,7 +14,7 @@ from typing import Callable
 
 from dronemanager.drone import Drone, parse_address, DroneConfigs, DroneConfig
 from dronemanager.navigation.rectlocalfence import RectLocalFence
-from dronemanager.utils import COMMON_FORMATTER, get_free_port, LOG_DIR, get_config
+from dronemanager.utils import COMMON_FORMATTER, get_free_port, LOG_DIR, get_config, ConfigError
 from dronemanager.navigation.core import Waypoint, Fence
 from dronemanager.plugin import PluginLoader
 
@@ -37,7 +37,9 @@ class DMConfig:
     """
 
     CORE_ENTRIES = ["drones", "mav_system_id", "mav_component_id", "plugin_settings", "default_plugins", "testing"]
-    # These must be present
+    """The entries DroneManager itself uses. Other entries are added to the config as extra attributes."""
+    REQUIRED_ENTRIES = ["drones", "mav_system_id", "mav_component_id", "testing"]
+    """The entries that must be in the configuration file."""
 
     def __init__(self, drone_configs: DroneConfigs, mav_system_id: int = 246, mav_component_id: int = 190,
                  default_plugins: list[str] | None = None, testing: bool = False,
@@ -61,25 +63,55 @@ class DMConfig:
 
     @classmethod
     def from_file(cls, filepath: str):
+        """Load the configuration from a file.
+
+        Args:
+            filepath: The path of the configuration file.
+
+        Returns:
+            The configuration.
+
+        Raises:
+            ConfigError: If the file isn't valid JSON or an entry is missing or has the wrong type.
+        """
         with open(filepath, "rt") as f:
-            configs = []
-            json_obj = json.load(f)
-            for obj_dict in json_obj["drones"]:
-                configs.append(DroneConfig(**obj_dict))
-            configs = DroneConfigs(configs)
-            mav_sys_id = json_obj["mav_system_id"]
-            mav_comp_id = json_obj["mav_component_id"]
-            testing = json_obj["testing"]
-            if "plugin_settings" in json_obj:
-                plugin_settings = json_obj["plugin_settings"]
-            if "default_plugins" in json_obj:
-                default_plugins = json_obj["default_plugins"]
-            extra_entries = {}
-            for key in json_obj:
-                if key not in cls.CORE_ENTRIES:
-                    extra_entries[key] = json_obj[key]
-        return cls(configs, mav_system_id=mav_sys_id, mav_component_id=mav_comp_id, plugin_settings=plugin_settings,
-                   default_plugins=default_plugins, testing=testing, **extra_entries)
+            try:
+                json_obj = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ConfigError("JSON", f"{e.msg} at line {e.lineno}, column {e.colno}", filepath) from e
+
+        def check_type(entry: str, value: typing.Any, expected: type, description: str):
+            # bool is a subclass of int, but true isn't a valid ID
+            if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
+                raise ConfigError(entry, f"must be {description}, not {json.dumps(value)}", filepath)
+
+        check_type("The configuration", json_obj, dict, "a JSON object")
+        missing = [key for key in cls.REQUIRED_ENTRIES if key not in json_obj]
+        if missing:
+            raise ConfigError(", ".join(missing), "missing", filepath)
+        check_type("mav_system_id", json_obj["mav_system_id"], int, "an integer")
+        check_type("mav_component_id", json_obj["mav_component_id"], int, "an integer")
+        check_type("testing", json_obj["testing"], bool, "true or false")
+        check_type("drones", json_obj["drones"], list, "a list of drone configurations")
+        plugin_settings = json_obj.get("plugin_settings", {})
+        check_type("plugin_settings", plugin_settings, dict, "an object with the settings for each plugin")
+        for name, settings in plugin_settings.items():
+            check_type(f"plugin_settings.{name}", settings, dict, "an object with the plugin's arguments")
+        default_plugins = json_obj.get("default_plugins", [])
+        check_type("default_plugins", default_plugins, list, "a list of plugin names")
+
+        configs = []
+        for i, obj_dict in enumerate(json_obj["drones"]):
+            check_type(f"drones[{i}]", obj_dict, dict, "an object")
+            for key in ["drone_name", "address"]:
+                if key not in obj_dict:
+                    raise ConfigError(f"drones[{i}]", f"missing '{key}'", filepath)
+            configs.append(DroneConfig(**obj_dict))
+        configs = DroneConfigs(configs)
+        extra_entries = {key: value for key, value in json_obj.items() if key not in cls.CORE_ENTRIES}
+        return cls(configs, mav_system_id=json_obj["mav_system_id"], mav_component_id=json_obj["mav_component_id"],
+                   plugin_settings=plugin_settings, default_plugins=default_plugins, testing=json_obj["testing"],
+                   **extra_entries)
 
     def to_file(self, filepath: str):
         with open(filepath, "wt") as f:
@@ -534,6 +566,35 @@ class DroneManager:
             self.config.to_file(get_config().as_posix())
         else:
             self.config.to_file(alt_path)
+
+    def check_plugin_settings(self) -> list[ConfigError]:
+        """Check the plugin entries of the configuration against the available plugins.
+
+        Checks that the default plugins exist and that the settings of each plugin match its arguments, see
+        :py:meth:`~dronemanager.plugin.Plugin.check_settings`. Settings with names that aren't plugins are skipped, as
+        they can belong to sub-plugins such as missions, or to plugins loaded under a different name.
+        The basic structure of the configuration is already checked when it is loaded.
+
+        Returns:
+            The problems found. Empty if the configuration is fine.
+        """
+        errors = []
+        options = self.plugin_options
+        for plugin in self.config.default_plugins:
+            if plugin not in options:
+                errors.append(ConfigError("default_plugins", f"no plugin named '{plugin}' "
+                                                             f"(available: {', '.join(sorted(options))})"))
+        for name, settings in self.config.plugin_settings.items():
+            if name not in options:
+                continue
+            plugin_class = self.plugin_loader.get_plugin_class(name)
+            if plugin_class is None:
+                continue  # Import error, logged by the plugin loader
+            try:
+                plugin_class.check_settings(name, settings)
+            except ConfigError as e:
+                errors.append(e)
+        return errors
 
 # PLUGINS ##############################################################################################################
 

@@ -14,7 +14,7 @@ import sys
 from typing import Callable, Coroutine
 
 import dronemanager.core
-from dronemanager.utils import DOC_DIR, SRC_DIR, cancel_running_tasks
+from dronemanager.utils import DOC_DIR, SRC_DIR, ConfigError, cancel_running_tasks
 
 
 # TODO: Figure out scheduling
@@ -78,6 +78,33 @@ class Plugin(abc.ABC):
            plugin has loaded. These coroutines should be complete, i.e. ``coro(args)`` and not ``coro``."""
         self.running_tasks: set[Future | asyncio.Future] = set()
         """A set of awaitables currently running. These are automatically cancelled if the plugin is closed."""
+
+    @classmethod
+    def check_settings(cls, name: str, settings: dict):
+        """Check that the settings from the configuration file can be passed to this plugin.
+
+        Compares the entries with the arguments of the plugin's ``__init__``, after ``dm``, ``logger`` and ``name``.
+        Plugins that take arbitrary keyword arguments aren't checked. Subclasses can extend this for more checks.
+
+        Args:
+            name: The name of the plugin, as used in the configuration file.
+            settings: The settings for this plugin from the configuration file.
+
+        Raises:
+            ConfigError: If an entry is unknown or a required argument is missing.
+        """
+        parameters = list(inspect.signature(cls.__init__).parameters.values())[4:]  # After self, dm, logger and name
+        takes_any = any(param.kind == param.VAR_KEYWORD for param in parameters)
+        named = [param for param in parameters if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)]
+        valid = [param.name for param in named]
+        unknown = [] if takes_any else [key for key in settings if key not in valid]
+        if unknown:
+            raise ConfigError(f"plugin_settings.{name}",
+                              f"unknown {'entry' if len(unknown) == 1 else 'entries'} {', '.join(unknown)} "
+                              f"(valid: {', '.join(valid) if valid else 'none'})")
+        missing = [param.name for param in named if param.default is param.empty and param.name not in settings]
+        if missing:
+            raise ConfigError(f"plugin_settings.{name}", f"missing {', '.join(missing)}")
 
     def start_background_functions(self):
         """Starts declared background functions and tracks them."""
@@ -230,17 +257,18 @@ class MetaPlugin(Plugin, abc.ABC):
                             await self.dm.load(dependency)
                     else:
                         self.logger.warning("Nested dependencies are only supported to the first level, i.e. one dot.")
-                if name in self.dm.config.plugin_settings:
-                    kwargs = self.dm.config.plugin_settings[name]
-                else:
-                    kwargs = {}
+                kwargs = self.dm.config.plugin_settings.get(name, {})
+                plugin_class.check_settings(name, kwargs)
                 plugin = plugin_class(self.dm, self.logger, name, **kwargs)
                 setattr(self.dm, name, plugin)
                 self._loaded[name] = plugin
                 await plugin.start()
             except Exception as e:
-                self.logger.error(f"Couldn't load plugin {name} due to an exception: {repr(e)}!")
-                self.logger.debug(repr(e), exc_info=True)
+                if isinstance(e, ConfigError):
+                    self.logger.error(f"Couldn't load plugin {name}! {e}")
+                else:
+                    self.logger.error(f"Couldn't load plugin {name} due to an exception: {repr(e)}!")
+                    self.logger.debug(repr(e), exc_info=True)
                 if plugin is not None:
                     await plugin.close()
                 if hasattr(self.dm, name):
