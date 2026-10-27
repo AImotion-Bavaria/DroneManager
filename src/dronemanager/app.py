@@ -9,8 +9,9 @@ import types
 import typing
 
 import dronemanager
+from dronemanager.comm_protocols.mavsdk import DroneMAVSDK
 from dronemanager.core import DroneManager
-from dronemanager.drone import Drone, DroneMAVSDK
+from dronemanager.drone import Drone
 from dronemanager.utils import COMMON_FORMATTER, coroutine_awaiter, LOG_DIR, CONFIG_FILE
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 
@@ -230,7 +231,7 @@ class CommandScreen(Screen):
 
         flight_mode_parser = command_parsers.add_parser("mode", help="Change the drone(s) flight mode", logger=self.logger)
         flight_mode_parser.add_argument("mode", type=str,
-                                        help=f"Target flight mode. Must be one of {self.dm.drone_class.VALID_FLIGHTMODES}.")
+                                        help=f"Target flight mode. Must match a valid flightmode for the drone.")
         flight_mode_parser.add_argument("drones", type=str, nargs="+",
                                         help="Drone(s) to change flight mode on.")
         flight_mode_parser.add_argument("-s", "--schedule", action="store_true",
@@ -268,18 +269,6 @@ class CommandScreen(Screen):
         fly_to_gps_parser.add_argument("-t", "--tolerance", type=float, required=False, default=0.25,
                                        help="Position tolerance")
         fly_to_gps_parser.add_argument("-s", "--schedule", action="store_true",
-                                       help="Queue this action instead of executing immediately.")
-
-        go_to_parser = command_parsers.add_parser("goto", help="Send the drone to a GPS coordinate without offboard", logger=self.logger)
-        go_to_parser.add_argument("drone", type=str, help="Name of the drone")
-        go_to_parser.add_argument("lat", type=float, help="Target latitude")
-        go_to_parser.add_argument("long", type=float, help="Target longitude")
-        go_to_parser.add_argument("alt", type=float, help="Target altitude (relative to takeoff)")
-        go_to_parser.add_argument("yaw", type=float, nargs="?", default=None,
-                                       help="Target yaw in degrees. Default maintains current facing.")
-        go_to_parser.add_argument("-t", "--tolerance", type=float, required=False, default=0.25,
-                                       help="Position tolerance")
-        go_to_parser.add_argument("-s", "--schedule", action="store_true",
                                        help="Queue this action instead of executing immediately.")
 
         move_parser = command_parsers.add_parser("move", help="Send the drones x, y, z meters north, east or down.", logger=self.logger)
@@ -363,7 +352,6 @@ class CommandScreen(Screen):
                     if has_default:
                         arg_kwargs["default"] = default
                     tmp_parser.add_argument(arg_name, **arg_kwargs)
-                    # TODO: Add help to argument from parameters in doc string
                     self.logger.debug(f"Added Argument {arg_name}: {base_type, is_list, is_required}")
                 self.dynamic_commands[cli_command] = command
             return True
@@ -441,7 +429,8 @@ class CommandScreen(Screen):
                             log_messages = True
                         else:
                             log_messages = False
-                    tmp = asyncio.create_task(self.dm.connect_to_drone(args.drone, drone_address=address, timeout=args.timeout,
+                    # TODO: Drone class argument, rework whole conn procedure
+                    tmp = asyncio.create_task(self.dm.connect_to_drone(args.drone, drone_class=DroneMAVSDK, drone_address=address, timeout=args.timeout,
                                                                        telemetry_frequency=args.frequency,
                                                                        log_telemetry=log_messages))
                 elif command == "params":
@@ -476,9 +465,6 @@ class CommandScreen(Screen):
                                                              tol=args.tolerance, schedule=args.schedule))
                 elif command == "flytogps":
                     tmp = asyncio.create_task(self.dm.fly_to(args.drone, gps=[args.lat, args.long, args.alt], yaw=args.yaw,
-                                                             tol=args.tolerance, schedule=args.schedule))
-                elif command =="goto":
-                    tmp = asyncio.create_task(self.dm.go_to(args.drone, gps=[args.lat, args.long, args.alt], yaw=args.yaw,
                                                              tol=args.tolerance, schedule=args.schedule))
                 elif command == "move":
                     tmp = asyncio.create_task(self.dm.move(args.drone, [args.x, args.y, args.z], yaw=args.yaw,
@@ -808,8 +794,7 @@ def main():
         stop_cpu_checker = Event()
         profile_process = Process(target=check_cpu, args=(this_pid, stop_cpu_checker))
         profile_process.start()
-        drone_type = DroneMAVSDK
-        drone_manager = DroneManager(drone_type, log_to_console=False)
+        drone_manager = DroneManager(log_to_console=False)
         app = DroneApp(drone_manager, logger=drone_manager.logger)
         app.run()
         logging.shutdown()
@@ -817,8 +802,7 @@ def main():
         profile_process.join()
     else:
         smoke_test = "--smoke-test" in sys.argv
-        drone_type = DroneMAVSDK
-        drone_manager = DroneManager(drone_type, log_to_console=False)
+        drone_manager = DroneManager(log_to_console=False)
         app = DroneApp(drone_manager, logger=drone_manager.logger, smoke_test=smoke_test)
         app.run()
         logging.shutdown()

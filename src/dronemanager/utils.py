@@ -4,22 +4,18 @@ positions.
 Unless stated otherwise, a GPS coordinate is any indexable sequence with the latitude, longitude and AMSL in that order.
 """
 
-import math
-import pathlib
-import threading
-from collections.abc import Sequence
-from urllib.parse import urlparse
-import numpy as np
-import logging
-import socket
 import asyncio
+from collections.abc import Sequence, MutableSet
+from concurrent.futures import Future
 from haversine import inverse_haversine, haversine, Direction, Unit
-
-from platformdirs import user_documents_path
 from importlib.resources import files
-
-from queue import Queue, Empty, ShutDown, Full
-import time
+import logging
+import math
+import numpy as np
+import pathlib
+from platformdirs import user_documents_path
+import socket
+from urllib.parse import urlparse
 
 COMMON_FORMATTER = logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)s %(name)s - %(message)s', datefmt="%H:%M:%S")
 """The common formatter string for the loggers.
@@ -298,36 +294,18 @@ async def coroutine_awaiter(task: asyncio.Future, logger: logging.Logger):
         logger.debug(e, exc_info=True)
 
 
-class ForwardingHandler(logging.Handler):
-    def __init__(self, target_logger: logging.Logger):
-        super().__init__()
-        self.target_logger = target_logger
-        self.queue = Queue(maxsize=100)
-        self._stop_threads = False
+def cancel_running_tasks(running_tasks: MutableSet[asyncio.Future | Future]):
+    """Cancel all tasks in a collection of tasks.
 
-        self._logging_thread = threading.Thread(target=self._write_to_logger, args = (lambda: self._stop_threads,))
-        self._logging_thread.start()
+    This is a common pattern in DroneManager, which is why the functionality is bundled here.
 
-    def emit(self, record: logging.LogRecord):
-        # Forward the existing LogRecord to the target logger.
-        try:
-            if record.levelno >= self.level:
-                self.queue.put(record, block=False)
-        except Full:
-            self.target_logger.warning("MAVSDK Logger queue is full!")
-
-    def _write_to_logger(self, stop):
-        while not stop():
-            try:
-                item = self.queue.get(timeout=1)
-                self.target_logger.handle(item)
-            except Empty, ShutDown:
-                pass
-
-    def close(self):
-        self._stop_threads = True
-        self.queue.shutdown(immediate=True)
-
+    Args:
+        running_tasks: A set of tasks to be cancelled.
+    """
+    while len(running_tasks) > 0:
+        task = running_tasks.pop()
+        if isinstance(task, asyncio.Future) or isinstance(task, Future):
+            task.cancel()
 
 # The first haversine/ inverse_haversine calls are slow, because of numba stuff, so do it here
 dist_gps([10, 20, 300], [20, 10, 400])

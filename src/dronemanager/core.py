@@ -13,17 +13,15 @@ import traceback
 from typing import Callable
 
 import dronemanager
-from dronemanager.drone import Drone, parse_address, DroneConfigs, DroneConfig
-from dronemanager.navigation.rectlocalfence import RectLocalFence
-from dronemanager.utils import COMMON_FORMATTER, LOG_DIR, get_config
+from dronemanager.comm_protocols.core import DroneComProtocol
+from dronemanager.comm_protocols.mavsdk import MAVSDKComm
+from dronemanager.drone import Drone, DroneConfigs, DroneConfig
 from dronemanager.navigation.core import Waypoint, Fence
+from dronemanager.navigation.rectlocalfence import RectLocalFence
 from dronemanager.plugin import PluginLoader
+from dronemanager.utils import COMMON_FORMATTER, LOG_DIR, get_config, parse_address
 
 import logging
-
-import mavsdk.logging
-from mavsdk.asyncio import Mavsdk, Configuration
-
 
 # TODO: Fence class discovery
 FENCES = {
@@ -102,8 +100,7 @@ class DroneManager:
     # TODO: Handle MAVSDK crashes - Not sure at all what causes them
     # TODO: Refactor functions other than fly_to to also use the list wrapping convenience
 
-    def __init__(self, drone_class, logger=None, log_to_console=True, console_log_level=logging.INFO):
-        self.drone_class = drone_class
+    def __init__(self, logger=None, log_to_console=True, console_log_level=logging.INFO):
         self.drones: dict[str, Drone] = {}
         # self.drones acts as the list/manager of connected drones, any function that writes or deletes items should
         # protect those writes/deletes with this lock. Read only functions can ignore it.
@@ -137,32 +134,17 @@ class DroneManager:
             console_handler.setFormatter(COMMON_FORMATTER)
             self.logger.addHandler(console_handler)
 
-        self._mavsdk = self.launch_mavsdk()
+        self.comm_protocols: dict[str, DroneComProtocol] = {}
+
+        # TODO: Make this dynamic over CLI
+        self.comm_protocols["mavsdk"] = MAVSDKComm(self.logger, system_id=self.system_id, component_id=self.component_id)
 
         self.plugin_loader = PluginLoader(self, self.logger, "PluginLoader")
         self.logger.info(f"Starting DroneManager version {dronemanager.__version__}")
 
-    def launch_mavsdk(self):
-        # TODO: Rework discovery, so we can have passive discovery
-        self.logger.info("Setting up MAV Logger...")
-        mavsdk.logging.log_subscribe(self._log_callback)
-        self.logger.info("Finished setting up MAV Logger!")
-        return Mavsdk(Configuration.create_manual(self.system_id, self.component_id, True))
-
-    def _log_callback(self, level, message, file, line):
-        if level == 0:
-            log_level = logging.DEBUG
-        elif level == 1:
-            log_level = logging.INFO
-        elif level == 2:
-            log_level = logging.WARN
-        else:
-            log_level = logging.ERROR
-        self.logger.log(log_level, f"{message}, {file, line}")
-        return True
-
     async def connect_to_drone(self,
                                name: str,
+                               drone_class,
                                drone_address: str| None = None,
                                timeout: float = 30,
                                telemetry_frequency: float | None = None,
@@ -205,14 +187,14 @@ class DroneManager:
                         self.logger.error("Can't have a telemetry rate of less than 2!")
                     else:
                         config.position_rate = telemetry_frequency
-                drone = self.drone_class(name, (self.system_id, self.component_id), config=config, mavsdk=self._mavsdk)
+                drone = drone_class(name, (self.system_id, self.component_id), config=config)
                 connected = None
                 try:
                     if scheme == "serial":
                         self.logger.info(f"Trying to connect to drone {name} @{scheme}://{parsed_addr} with baud {parsed_port}")
                     else:
                         self.logger.info(f"Trying to connect to drone {name} @{scheme}://{parsed_addr}:{parsed_port}")
-                    connected = await asyncio.wait_for(drone.connect(drone_address, log_telemetry=log_telemetry, mavsdk=self._mavsdk),
+                    connected = await asyncio.wait_for(drone.connect(drone_address, log_telemetry=log_telemetry),
                                                        timeout)
                 except (CancelledError, TimeoutError, OSError, socket.gaierror, AssertionError) as e:
                     if isinstance(e, CancelledError):
@@ -276,21 +258,34 @@ class DroneManager:
                     await self._remove_drone_object(name, drone)
                     self.logger.info(f"Disconnected {name}")
 
-    async def _single_drone_action(self, action, name, start_string, *args, schedule=False, **kwargs):
-        return await self._multiple_drone_action(action, [name], start_string, *args, schedule=schedule, **kwargs)
-
     async def _multiple_drone_action(self, action, names: str | Collection[str], start_string, *args, schedule=False, **kwargs):
         # Convenience check to avoid isues when using multiple drone functions with only a single drone.
         if isinstance(names, str):
             names = [names]
         try:
-            coros = [action(self.drones[name], *args, **kwargs) for name in names]
+            # Coroutines for each drone depending on action
+            if action == "arm":
+                coros = [self.drones[name].arm() for name in names]
+            elif action == "disarm":
+                coros = [self.drones[name].disarm() for name in names]
+            elif action == "takeoff":
+                coros = [self.drones[name].takeoff(*args, **kwargs) for name in names]
+            elif action == "change_flight_mode":
+                coros = [self.drones[name].change_flight_mode(*args, **kwargs) for name in names]
+            elif action == "land":
+                coros = [self.drones[name].land() for name in names]
+            else:
+                raise ValueError(f"Invalid action {action}")
+
+            # Schedule actions to corresponding drones
             if schedule:
                 self.logger.info("Queuing action: " + start_string.format(names))
                 results = [self.drones[name].schedule_task(coros[i]) for i, name in enumerate(names)]
             else:
                 self.logger.info(start_string.format(names))
                 results = [self.drones[name].execute_task(coros[i]) for i, name in enumerate(names)]
+
+            # Wait on and process results
             results = await asyncio.gather(*results, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
@@ -330,7 +325,18 @@ class DroneManager:
                 for j, drone_value in enumerate(value):
                     drone_kwargs[names[j]][kwarg] = drone_value
 
-            coros = [action(self.drones[name], *drone_args[name], **drone_kwargs[name]) for name in names]
+            # Coroutines for each drone depending on action
+            if action == "yaw_to":
+                coros = [self.drones[name].yaw_to(*drone_args[name], **drone_kwargs[name]) for name in names]
+            elif action == "fly_to":
+                coros = [self.drones[name].fly_to(*drone_args[name], **drone_kwargs[name]) for name in names]
+            elif action == "move":
+                coros = [self.drones[name].move(*drone_args[name], **drone_kwargs[name]) for name in names]
+            elif action == "wait":
+                coros = [self.drones[name].wait(*drone_args[name], **drone_kwargs[name]) for name in names]
+            else:
+                raise ValueError(f"Invalid action {action}")
+
             if schedule:
                 self.logger.info("Queuing action: " + start_string.format(names))
                 results = [self.drones[name].schedule_task(coros[i]) for i, name in enumerate(names)]
@@ -351,25 +357,25 @@ class DroneManager:
             self.logger.debug(repr(e), exc_info=True)
 
     async def arm(self, names: str | Collection[str], schedule=False):
-        return await self._multiple_drone_action(self.drone_class.arm, names,
+        return await self._multiple_drone_action("arm", names,
                                                  "Arming drone(s) {}.", schedule=schedule)
 
     async def disarm(self, names: str | Collection[str], schedule=False):
-        return await self._multiple_drone_action(self.drone_class.disarm, names,
+        return await self._multiple_drone_action("disarm", names,
                                                  "Disarming drone(s) {}.", schedule=schedule)
 
     async def takeoff(self, names: str | Collection[str], altitude=2.0, schedule=False, allow_in_air=True):
-        return await self._multiple_drone_action(self.drone_class.takeoff, names,
+        return await self._multiple_drone_action("takeoff", names,
                                                  "Takeoff for Drone(s) {}.", altitude, schedule=schedule, allow_in_air=allow_in_air)
 
     async def change_flightmode(self, names: str | Collection[str], flightmode: str, schedule=False):
-        await self._multiple_drone_action(self.drone_class.change_flight_mode,
+        await self._multiple_drone_action("change_flight_mode",
                                           names,
                                           "Changing flightmode for drone(s) {} to " + flightmode + ".",
                                           flightmode, schedule=schedule)
 
     async def land(self, names: str | Collection[str], schedule=False):
-        await self._multiple_drone_action(self.drone_class.land, names,
+        await self._multiple_drone_action("land", names,
                                           "Landing drone(s) {}.", schedule=schedule)
 
     def set_fence(self, names: str | Collection[str], fence: Fence):
@@ -411,7 +417,7 @@ class DroneManager:
             yaw = [yaw for _ in range(n_drones)]
         if isinstance(yaw_rate, float) and n_drones > 1:
             yaw_rate = [yaw_rate for _ in range(n_drones)]
-        return await self._multiple_drone_multiple_params_action(self.drone_class.yaw_to, names,
+        return await self._multiple_drone_multiple_params_action("yaw_to", names,
                                                                  f"Yawing drones {names}", yaw,
                                                                  schedule=schedule, yaw_rate=yaw_rate, tolerance=tol,
                                                                  local=local)
@@ -425,7 +431,7 @@ class DroneManager:
         n_drones = 1 if isinstance(names, str) else len(names)
         if isinstance(tol, float) and n_drones > 1:
             tol = [tol for _ in range(n_drones)]
-        return await self._multiple_drone_multiple_params_action(self.drone_class.fly_to, names,
+        return await self._multiple_drone_multiple_params_action("fly_to", names,
                                                                  f"Moving drones {names}", schedule=schedule,
                                                                  tolerance=tol, local=local, gps=gps, waypoint=waypoint,
                                                                  yaw=yaw)
@@ -449,13 +455,13 @@ class DroneManager:
             tol = [tol for _ in range(n_drones)]
         if isinstance(use_gps, bool) and n_drones > 1:
             use_gps = [use_gps for _ in range(n_drones)]
-        return await self._multiple_drone_multiple_params_action(self.drone_class.move, names,
+        return await self._multiple_drone_multiple_params_action("move", names,
                                                                  f"Moving drones {names}", offset,
                                                                  schedule=schedule, yaw=yaw, use_gps=use_gps,
                                                                  tolerance=tol)
 
     async def wait(self, names: str | Collection[str], delay: float | Collection[float], schedule=True):
-        return await self._multiple_drone_multiple_params_action(self.drone_class.wait, names,
+        return await self._multiple_drone_multiple_params_action("wait", names,
                                                                  f"Drones {names} waiting", delay,
                                                                  schedule=schedule)
 
@@ -467,21 +473,6 @@ class DroneManager:
             self.logger.warning(f"No drone named {name}!")
         except Exception as e:
             self.logger.error(repr(e))
-
-    async def go_to(self, names: str | Collection[str], local: Collection[float] | None = None,
-                     gps: Collection[float] | None = None, waypoint: list[Waypoint] | None = None,
-                     yaw: Collection[float] | float | None = None, tol: float | Collection[float] = 0.25, schedule=True):
-        """ Note that this uses the GO TO Mavlink command instead of offboard mode."""
-        assert local is not None or gps is not None or waypoint is not None, ("Must provide either waypoints, gps or "
-                                                                              "local coordinates!")
-        # Maybe allow for single args and then duplicate those for all drones?
-        n_drones = 1 if isinstance(names, str) else len(names)
-        if isinstance(tol, float) and n_drones > 1:
-            tol = [tol for _ in range(n_drones)]
-        return await self._multiple_drone_multiple_params_action(self.drone_class.go_to, names,
-                                                                 f"Moving drones {names}", schedule=schedule,
-                                                                 tolerance=tol, local=local, gps=gps, waypoint=waypoint,
-                                                                 yaw=yaw)
 
     async def action_stop(self, names):
         if not names:
@@ -544,7 +535,8 @@ class DroneManager:
     async def close(self):
         await self.disconnect(self.drones)
         await self.plugin_loader.close()
-        self._mavsdk.destroy()
+        for comm_protocol in self.comm_protocols.values():
+            await comm_protocol.close()
 
 # PLUGINS ##############################################################################################################
 
