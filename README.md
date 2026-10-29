@@ -3,10 +3,11 @@
 
 # DroneManager
 
-A package to connect to and control multiple drones.
+A package and terminal interface to connect and control multiple drones using MAVLink.
+
+![Screenshot of the tools terminal interface](https://github.com/AImotion-Bavaria/DroneManager/blob/main/docs/imgs/tool-screenshot.png)
 
 [A full API documentation and user guides are available on ReadTheDocs.](https://dronemanager.readthedocs.io)
-
 
 > [!NOTE]  
 > The documentation is currently a work in progress.

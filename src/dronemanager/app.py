@@ -402,6 +402,7 @@ class CommandScreen(Screen):
                         else:
                             log_messages = False
                     # TODO: This whole thing for new conn procedure, use dm convenience function.
+                    # TODO: Adjust documentation
                     tmp = asyncio.create_task(self.dm.connect_to_drone(args.drone, drone_class=MAVSDKDrone, drone_address=address, timeout=args.timeout,
                                                                        telemetry_frequency=args.frequency,
                                                                        log_telemetry=log_messages))
