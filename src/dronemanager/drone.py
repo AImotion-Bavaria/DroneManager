@@ -3,7 +3,6 @@ import datetime
 from collections import deque
 import math
 import os.path
-import threading
 from collections.abc import Callable
 from abc import ABC, abstractmethod
 from typing import Coroutine
@@ -13,7 +12,6 @@ import numpy as np
 from mavsdk.asyncio.plugins.telemetry import FlightMode as MAVSDKFlightMode
 from mavsdk.asyncio.plugins.telemetry import FixType as MAVSDKFixType
 
-from dronemanager.comm_protocols.core import DroneComProtocol
 from dronemanager.navigation.core import WayPointType, Waypoint, PathGenerator, PathFollower, Fence
 from dronemanager.utils import dist_ned, dist_gps, cancel_running_tasks
 from dronemanager.utils import COMMON_FORMATTER
@@ -45,6 +43,79 @@ class Battery:
         return f"Remain: {self.remaining}   Consumed: {self.consumed}   V: {self.voltage}   T: {self.temperature}"
 
 
+
+class DroneComProtocol(ABC):
+
+    NAME = "YOUDIDSOMETHINGWRONG"
+
+    """ABC for drone communication protocols, such as MAVLink."""
+    def __init__(self, logger, *args, **kwargs):
+        self.logger = logger.getChild(self.__class__.__name__)
+        self.running_tasks: set[asyncio.Task] = set()
+
+    def close(self):
+        """Closes the communication protocol.
+
+        Implementing classes should call this during their close calls.
+        """
+        cancel_running_tasks(self.running_tasks)
+
+    @abstractmethod
+    async def add_connection(self, connection_string):
+        """Add some kind of remote connection.
+
+        For example, in MAVSDK, start listening on a port, or send heartbeats to a remote IP.
+        Can require arbitrary arguments, which will be passed from DroneManager, or through the CLI.
+
+        The connection string can also be used as an identifier to remove the connection again.
+
+        Return values determine other behaviour by DroneManager in regard to this connection.
+        - A successful or already existing connection should return ``None``.
+        - A failed connection should raise an exception. This is used to inform the user, and so should contain
+          relevant information.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def remove_connection(self, identifier):
+        """Remove a remote connection"""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def discovered_drones(self) -> list["Drone"]:
+        """Should return a list of potential drone connections.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def discovered_other(self):
+        """Like :py:meth:`discovered_drone_systems` but for things which are not drones.
+
+        Might be used by other parts of the code to connect ancillary hardware."""
+
+    @abstractmethod
+    async def add_drone(self, drone_name: str, drone_identifier: str, config) -> "Drone | None":
+        """Create a drone object for this protocol.
+
+        Should check for uniqueness, to prevent multiple drone objects for the same drone.
+        Should return the drone object if initialization/connection was successful, and None if not.
+        # TODO: Description arguments, in particular drone identifier.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def remove_drone(self, drone_name: str) -> bool:
+        """Remove a drone from the comm protocol.
+
+        Removing drones from DroneManager is not done through the comm protocol but only through DroneManager which calls
+        :py:meth:`~dronemanager.drone.Drone.shutdown` on the specific drone object directly. That function then calls
+        this to make sure the drone is deregistered with the protocol, if necessary.
+
+        Should return True if the drone was disconnected."""
+        raise NotImplementedError
+
+
+
 class DroneConfig:
     """ Convenience class for drone configurations.
 
@@ -53,13 +124,16 @@ class DroneConfig:
     the drone name matching the configuration.
     """
 
-    def __init__(self, drone_name: str, address: str | None,
+    def __init__(self, drone_name: str, drone_identifier: str,
+                 comm_protocol: str, connection: str | None = None,
                  position_rate: float = 5.0, log_telemetry: bool = False,
                  max_h_vel: float = 10.0, max_down_vel: float = 1.0, max_up_vel: float = 3.0, max_h_acc: float = 1.5,
                  max_v_acc: float = 0.5, max_h_jerk: float = 0.5, max_v_jerk: float = 0.5, max_yaw_vel: float = 60,
                  max_yaw_acc: float = 30, max_yaw_jerk: float = 30, size: float = 1.0, rtsp: str | None = None, **kwargs):
         self.drone_name = drone_name
-        self.address = address
+        self.drone_identifier = drone_identifier
+        self.protocol = comm_protocol
+        self.connection = connection
         self.position_rate = position_rate
         self.max_h_vel = max_h_vel
         self.max_down_vel = max_down_vel
@@ -129,66 +203,85 @@ class DroneParams:
         self.max_yaw_rate = None  # degrees/s
 
 
-class Drone(ABC, threading.Thread):
+class Drone(ABC):
+
+    # Drone discovery happens in two stages: First adding a connection to where we expect to discover drones.
+    # Discovered drones then have a simple "basic" instantiation
+    # These can then be "used" by drone manager
+    # Drones which are discovered but not in use have an empty name "".
+    # Even when not in use, they have a connection state through is_connected.
 
     VALID_FLIGHTMODES = set()
     VALID_SETPOINT_TYPES = set()
 
-    def __init__(self, name: str, gcs_ident, comm_protocol, *args, log_to_file=True, config: DroneConfig | None = None, **kwargs):
-        threading.Thread.__init__(self)
-        self.name = name
-        self.gcs_ident = gcs_ident
+    def __init__(self, comm_protocol: DroneComProtocol, identifier, *args, **kwargs):
+        self.name: str = ""
         self.comm: DroneComProtocol = comm_protocol
-        self.drone_addr = None
-        self.drone_identifier = None
+        self.drone_identifier = identifier
+        # Internal object which should be used to prevent multiple drone objects for the same physical drone.
+        self.initialized = False
+        # If this is a placeholder for a potential drone connection or already in use by DroneManager. Should be set to
+        # True at the end of the "initialize" method.
+
         self.autopilot = None
-        if config:
-            self.config = config
-        else:
-            self.config = DroneConfig(name, self.drone_addr)
+
+        # Action queue stuff
         self.action_queue: deque[tuple[Coroutine, asyncio.Future]] = deque()
         self.current_action: asyncio.Task | None = None
         self.current_action_tasks: set[asyncio.Task] = set()  # TODO: Go through all functions and add any intermediates
-        self.should_stop = threading.Event()
-        self.logger = logging.getLogger(name)
-        self.logger.setLevel(logging.DEBUG)
+
+        # All of these are set or start being used once the drone is put into use by DroneManager
+        self.config: DroneConfig | None = None
+        self.logger = None
         self.logging_handlers = []
-        self.telem_logger = logging.getLogger(f"{name}_telemetry")
-        self.telem_logger.setLevel(logging.DEBUG)
+        self.telem_logger = None
         self.telem_logging_handlers = []
-        self.log_to_file = log_to_file
-        if self.log_to_file:
-            stamp = datetime.datetime.now()
-            log_file_name = f"drone_{self.name}_{stamp}"
-            log_file_name = log_file_name.replace(":", "_").replace(".", "_") + ".log"
-            os.makedirs(LOG_DIR, exist_ok=True)
-            file_handler = logging.FileHandler(os.path.join(LOG_DIR, log_file_name))
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(COMMON_FORMATTER)
-            self.add_handler(file_handler)
-
-            telemetry_file_name = f"telemetry_{self.name}_{stamp}"
-            telemetry_file_name = telemetry_file_name.replace(":", "_").replace(".", "_") + ".log"
-            telemetry_handler = logging.FileHandler(os.path.join(LOG_DIR, telemetry_file_name))
-            telemetry_handler.setLevel(logging.DEBUG)
-            telemetry_handler.setFormatter(COMMON_FORMATTER)
-            self.add_telemetry_handler(telemetry_handler)
-
-        self.position_update_rate: float = 10
+        self.position_update_rate: float = math.nan
         self.fence: Fence | None = None
         self.path_generator: PathGenerator | None = None
         self.path_follower: PathFollower | None = None
 
         self.return_position: Waypoint | None = None  # Position of the drone immediately after takeoff
 
-        self.is_paused = False
+        self.is_paused: bool = False
         self.drone_params: DroneParams | None = None
-        self.start()
-        asyncio.create_task(self._task_scheduler())
 
-    def run(self):
-        while not self.should_stop:
-            pass
+        self._running_tasks = set()  # Keeps track of coroutines
+
+    @abstractmethod
+    def initialize(self, name: str, config: DroneConfig):
+        # A drone is initialized when it is actually added to DroneManager.
+        # In particular, logging and telemetry processing only happens ance this function is called, and the config attribute is only available after.
+        # Implementing functions should call this first and then do whatever else they need to do, including path
+        # generator and path follower setup. They should also set is_initialized to True at the end.
+
+        self.name = name
+        self.config = config
+
+        # Logging stuff
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(logging.DEBUG)
+        self.telem_logger = logging.getLogger(f"{name}_telemetry")
+        self.telem_logger.setLevel(logging.DEBUG)
+
+        stamp = datetime.datetime.now()
+        log_file_name = f"drone_{self.name}_{stamp}"
+        log_file_name = log_file_name.replace(":", "_").replace(".", "_") + ".log"
+        os.makedirs(LOG_DIR, exist_ok=True)
+        file_handler = logging.FileHandler(os.path.join(LOG_DIR, log_file_name))
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(COMMON_FORMATTER)
+        self.add_handler(file_handler)
+
+        telemetry_file_name = f"telemetry_{self.name}_{stamp}"
+        telemetry_file_name = telemetry_file_name.replace(":", "_").replace(".", "_") + ".log"
+        telemetry_handler = logging.FileHandler(os.path.join(LOG_DIR, telemetry_file_name))
+        telemetry_handler.setLevel(logging.DEBUG)
+        telemetry_handler.setFormatter(COMMON_FORMATTER)
+        self.add_telemetry_handler(telemetry_handler)
+
+        self.position_update_rate = config.position_rate
+        asyncio.create_task(self._task_scheduler())
 
     async def _task_scheduler(self):
         while True:
@@ -233,18 +326,6 @@ class Drone(ABC, threading.Thread):
     def add_telemetry_handler(self, handler):
         self.telem_logger.addHandler(handler)
         self.telem_logging_handlers.append(handler)
-
-    @abstractmethod
-    async def stop_execution(self):
-        """ Stops the thread. This function should be called at the end of any implementing function.
-
-        :return:
-        """
-        self.should_stop.set()
-        for handler in self.logging_handlers:
-            self.logger.removeHandler(handler)
-        for handler in self.telem_logging_handlers:
-            self.telem_logger.removeHandler(handler)
 
     def pause(self):
         """ Pause task execution by setting self.is_paused to True.
@@ -315,7 +396,7 @@ class Drone(ABC, threading.Thread):
 
     @property
     @abstractmethod
-    def position_global(self) -> np.ndarray:
+    def position_global(self) -> np.ndarray[np.float64]:
         """
 
         :return: Array with the GPS coordinates [latitude, longitude, AMSL]
@@ -324,12 +405,12 @@ class Drone(ABC, threading.Thread):
 
     @property
     @abstractmethod
-    def position_ned(self) -> np.ndarray:
+    def position_ned(self) -> np.ndarray[np.float64]:
         pass
 
     @property
     @abstractmethod
-    def velocity(self) -> np.ndarray:
+    def velocity(self) -> np.ndarray[np.float64]:
         pass
 
     @property
@@ -339,7 +420,7 @@ class Drone(ABC, threading.Thread):
 
     @property
     @abstractmethod
-    def attitude(self) -> np.ndarray:
+    def attitude(self) -> np.ndarray[np.float64]:
         """ RPY in degrees"""
         pass
 
@@ -353,16 +434,20 @@ class Drone(ABC, threading.Thread):
         return self.drone_params is not None
 
     @abstractmethod
-    async def connect(self, drone_address, *args, **kwargs):
-        pass
-
-    @abstractmethod
     async def load_parameters(self):
         pass
 
     @abstractmethod
-    async def disconnect(self, force=False) -> bool:
-        pass
+    async def shutdown(self, force=False):
+        """Uninitializes the drone, shutting down related processing.
+
+        Base implementation ends the thread, stops coroutines and closes logging.
+        Implementing functions should call this during their own shutdown procedure."""
+        cancel_running_tasks(self._running_tasks)
+        for handler in self.logging_handlers:
+            self.logger.removeHandler(handler)
+        for handler in self.telem_logging_handlers:
+            self.telem_logger.removeHandler(handler)
 
     @abstractmethod
     async def arm(self) -> bool:

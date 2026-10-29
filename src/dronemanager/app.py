@@ -9,7 +9,7 @@ import types
 import typing
 
 import dronemanager
-from dronemanager.comm_protocols.mavsdk import DroneMAVSDK
+from dronemanager.comm_protocols.mav import MAVSDKDrone
 from dronemanager.core import DroneManager
 from dronemanager.drone import Drone
 from dronemanager.utils import COMMON_FORMATTER, coroutine_awaiter, LOG_DIR, CONFIG_FILE
@@ -27,7 +27,6 @@ from dronemanager.widgets import InputWithHistory, TextualLogHandler, DroneOverv
 
 import logging
 
-# TODO: Fence, path generator and path follower managing somehow
 
 pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s - %(message)s', datefmt="%H:%M:%S")
 
@@ -70,7 +69,6 @@ Bar {
             try:
                 if self.cur_drone is not None:
                     self.query_one("#name", expect_type=Static).update(f"{self.cur_drone.name}")
-                    self.query_one("#address", expect_type=Static).update(f"{self.cur_drone.drone_addr}")
                     self.query_one("#attitude", expect_type=Static).update(f"{self.cur_drone.attitude}")
                     self.query_one("#battery", expect_type=ProgressBar).update(
                         progress=self.cur_drone.batteries[0].remaining)
@@ -175,20 +173,40 @@ class CommandScreen(Screen):
         self.dm.add_plugin_load_coro(self._load_plugin_commands)
         self.dm.add_plugin_unload_coro(self._unload_plugin_commands)
 
-        asyncio.create_task(self._default_plugin_loading())
-
         self._awaiter_tasks = set()
 
-    async def _default_plugin_loading(self):
-        plugin_tasks = []
-        for plugin_name in self.dm.config.default_plugins:
-            plugin_tasks.append(asyncio.create_task(self.dm.load(plugin_name)))
-        await asyncio.gather(*plugin_tasks)
-        self.logger.info(f"Loaded startup plugins: {self.dm.plugins}")
+        asyncio.create_task(self.dm.start())
 
     def _base_parser(self):
         parser = ArgParser(logger = self.logger, description="Interactive command line interface to connect and control multiple drones")
         command_parsers = parser.add_subparsers(title="command", description="Command to execute.", dest="command")
+
+        add_conn_parser = command_parsers.add_parser("add-conn", help="Add a connection", logger=self.logger)
+        add_conn_parser.add_argument("com_protocol", type=str,
+                                     help="The communication protocol for which to add this connection.")
+        add_conn_parser.add_argument("conn_string", type=str,
+                                     help="Connection string for this protocol. For example, udp://:14550")
+
+        remove_conn_parser = command_parsers.add_parser("remove-conn", help="Remove a connection", logger=self.logger)
+        remove_conn_parser.add_argument("com_protocol", type=str,
+                                     help="The communication protocol from which to remove this connection.")
+        remove_conn_parser.add_argument("conn_string", type=str,
+                                     help="Identifier string for this connection.")
+
+        drone_list_parser = command_parsers.add_parser("list", help="List potential drones", logger=self.logger)
+
+        add_drone_parser = command_parsers.add_parser("add-drone", help="Add an already discovered drone to DM", logger=self.logger)
+        add_drone_parser.add_argument("com_protocol", type=str,
+                                      help="The communication protocol associated with this drone.")
+        add_drone_parser.add_argument("identifier", type=str, help="The identifier for this drone in this communication protocol")
+        add_drone_parser.add_argument("name", type=str, help="Name for the drone.")
+        add_drone_parser.add_argument("-f", "--frequency", type=float, default=None,
+                                      help="Telemetry frequency in Hz. Overwrites the default set in configuration entries.")
+        add_drone_parser.add_argument("-l", "--log", type=str, choices=["True", "False"], required=False, default=None,
+                                       help="If set to True, log telemetry messages. Our log format is currently bad "
+                                            "so this can lead to performance issues with many drones due to disk write "
+                                            "limits. Overwrites the equivalent entry in a configuration entry.")
+
 
         connect_parser = command_parsers.add_parser("connect", help="Connect a drone", logger=self.logger)
         connect_parser.add_argument("drone", type=str, help="Name for the drone.")
@@ -323,74 +341,8 @@ class CommandScreen(Screen):
 
         return parser, command_parsers
 
-    async def _load_plugin_commands(self, plugin_name, plugin):
-        try:
-            self.logger.debug(f"Loading CLI commands for plugin {plugin_name}")
-            commands = plugin.cli_commands
-            for command_name in commands:
-                command = commands[command_name]
-                cli_command = f"{plugin.PREFIX}-{command_name}".lower()
-                self.logger.debug(f"Inspecting command {command_name}")
-                doc_str = inspect.getdoc(command)
-                if doc_str is not None:
-                    help_string = doc_str.split("\n")[0]
-                else:
-                    help_string = "No doc string for this function!"
-                tmp_parser = self.command_parser.add_parser(cli_command, help=help_string, logger = self.logger)
-                for arg in check_cli_command_signatures(command):
-                    is_invalid, name, is_list, is_required, accepts_none, base_type, is_kwonly, has_default, default = arg
-                    arg_name = name if is_required else f"--{name}"
-                    arg_kwargs = {
-                        "type": base_type,
-                    }
-                    if is_invalid:
-                        raise RuntimeError(f"CLI command {command_name} has invalid parameter types for parameter {name}!")
-                    if is_list and is_required:
-                        arg_kwargs["nargs"] = "+"
-                    elif is_list and not is_required:
-                        arg_kwargs["nargs"] = "*"
-                    if has_default:
-                        arg_kwargs["default"] = default
-                    tmp_parser.add_argument(arg_name, **arg_kwargs)
-                    self.logger.debug(f"Added Argument {arg_name}: {base_type, is_list, is_required}")
-                self.dynamic_commands[cli_command] = command
-            return True
-        except Exception as e:
-            self.logger.warning("Failed to load CLI commands for the plugin!")
-            self.logger.debug(repr(e), exc_info=True)
-            return e
-
-    async def _unload_plugin_commands(self, plugin_name, plugin):
-        # TODO: ALL OF IT
-        # TODO: Apparently there isn't a great way to get rid of arguments in argparse, might have to delete the parser
-        #  and generate a new one (which should be possible due to plugin list)
-        pass
-
-    async def _add_drone_object(self, name, drone):
-        output = self.query_one("#output", expect_type=Log)
-        status_field = self.query_one("#status", expect_type=VerticalScroll)
-        self.logger.debug(f"Adding log pane handlers to {name}")
-        drone_handler = TextualLogHandler(output)
-        drone_handler.setLevel(logging.INFO)
-        drone_handler.setFormatter(pane_formatter)
-        drone.add_handler(drone_handler)
-        self.logger.debug(f"Adding overview widget for {name}")
-        drone_status_widget = DroneOverview(drone, UPDATE_RATE, self.logger)
-        self.drone_widgets[name] = drone_status_widget
-        await status_field.mount(drone_status_widget)
-
-    async def _remove_drone_object(self, name):
-        try:
-            await self.drone_widgets[name].remove()
-        except KeyError:
-            pass
-
     @on(InputWithHistory.Submitted, "#cli")
     async def cli(self, message):
-
-        #sys.stdout = StreamToLogger(self.logger, logging.INFO)
-        #sys.stderr = StreamToLogger(self.logger, logging.ERROR)
-
         value = message.value
         message.control.clear()
         tmp = None
@@ -410,13 +362,33 @@ class CommandScreen(Screen):
         except Exception as e:
             self.logger.warning("Exception during argument parsing!")
             self.logger.debug(repr(e), exc_info=True)
+            return
         try:
             if args.command:
                 command = args.command.lower()
                 if command != "kill" or args.drones:
                     self._kill_counter = 0
+                if command == "add-conn":
+                    tmp = asyncio.create_task(self.dm.add_conn(args.com_protocol, args.conn_string))
+                elif command == "remove-conn":
+                    tmp = asyncio.create_task(self.dm.remove_conn(args.com_protocol, args.conn_string))
+                elif command == "list":
+                    potential_drones = []
+                    for comm_protocol in self.dm.comm_protocols:
+                        comm_drones = await self.dm.comm_protocols[comm_protocol].discovered_drones()
+                        for drone in comm_drones:
+                            initialized_string = f"is initialized as {drone.name}" if drone.initialized else "not initialized."
+                            potential_drones.append(f"Protocol: {comm_protocol}, identifier: {drone.drone_identifier}, is connected: {drone.is_connected}, {initialized_string}")
+                    potential_drone_str = "\n".join(potential_drones)
+                    self.logger.info(f"Loaded comm protocols: {list(self.dm.comm_protocols.keys())}")
+                    self.logger.info(f"Potential drones:\n{potential_drone_str}")
+                elif command == "add-drone":
+                    tmp = asyncio.create_task(self.dm.add_drone(args.com_protocol, args.name, args.identifier,
+                                                                drone_config = None, log_telemetry = args.log,
+                                                                telemetry_frequency = args.frequency))
 
-                if command == "connect":
+
+                elif command == "connect":
                     address = args.drone_address
                     if args.drone in self.dm.drone_configs and not address:
                         address = self.dm.drone_configs[args.drone].address
@@ -429,8 +401,8 @@ class CommandScreen(Screen):
                             log_messages = True
                         else:
                             log_messages = False
-                    # TODO: Drone class argument, rework whole conn procedure
-                    tmp = asyncio.create_task(self.dm.connect_to_drone(args.drone, drone_class=DroneMAVSDK, drone_address=address, timeout=args.timeout,
+                    # TODO: This whole thing for new conn procedure, use dm convenience function.
+                    tmp = asyncio.create_task(self.dm.connect_to_drone(args.drone, drone_class=MAVSDKDrone, drone_address=address, timeout=args.timeout,
                                                                        telemetry_frequency=args.frequency,
                                                                        log_telemetry=log_messages))
                 elif command == "params":
@@ -447,6 +419,8 @@ class CommandScreen(Screen):
                                    f"\tMaximum down speed: {params.max_down_vel}\n"
                                    f"\tMaximum yaw rate: {params.max_yaw_rate}")
                     self.logger.info(out_str)
+
+
                 elif command == "disconnect":
                     tmp = asyncio.create_task(self.dm.disconnect(args.drones, force=args.force))
                 elif command == "arm":
@@ -514,6 +488,68 @@ class CommandScreen(Screen):
             self.logger.error("Encountered an exception executing the CLI!")
             self.logger.debug(repr(e), exc_info=True)
 
+    async def _load_plugin_commands(self, plugin_name, plugin):
+        try:
+            self.logger.debug(f"Loading CLI commands for plugin {plugin_name}")
+            commands = plugin.cli_commands
+            for command_name in commands:
+                command = commands[command_name]
+                cli_command = f"{plugin.PREFIX}-{command_name}".lower()
+                self.logger.debug(f"Inspecting command {command_name}")
+                doc_str = inspect.getdoc(command)
+                if doc_str is not None:
+                    help_string = doc_str.split("\n")[0]
+                else:
+                    help_string = "No doc string for this function!"
+                tmp_parser = self.command_parser.add_parser(cli_command, help=help_string, logger = self.logger)
+                for arg in check_cli_command_signatures(command):
+                    is_invalid, name, is_list, is_required, accepts_none, base_type, is_kwonly, has_default, default = arg
+                    arg_name = name if is_required else f"--{name}"
+                    arg_kwargs = {
+                        "type": base_type,
+                    }
+                    if is_invalid:
+                        raise RuntimeError(f"CLI command {command_name} has invalid parameter types for parameter {name}!")
+                    if is_list and is_required:
+                        arg_kwargs["nargs"] = "+"
+                    elif is_list and not is_required:
+                        arg_kwargs["nargs"] = "*"
+                    if has_default:
+                        arg_kwargs["default"] = default
+                    tmp_parser.add_argument(arg_name, **arg_kwargs)
+                    self.logger.debug(f"Added Argument {arg_name}: {base_type, is_list, is_required}")
+                self.dynamic_commands[cli_command] = command
+            return True
+        except Exception as e:
+            self.logger.warning("Failed to load CLI commands for the plugin!")
+            self.logger.debug(repr(e), exc_info=True)
+            return e
+
+    async def _unload_plugin_commands(self, plugin_name, plugin):
+        # TODO: ALL OF IT
+        # TODO: Apparently there isn't a great way to get rid of arguments in argparse, might have to delete the parser
+        #  and generate a new one (which should be possible due to plugin list)
+        pass
+
+    async def _add_drone_object(self, name, drone):
+        output = self.query_one("#output", expect_type=Log)
+        status_field = self.query_one("#status", expect_type=VerticalScroll)
+        self.logger.debug(f"Adding log pane handlers to {name}")
+        drone_handler = TextualLogHandler(output)
+        drone_handler.setLevel(logging.INFO)
+        drone_handler.setFormatter(pane_formatter)
+        drone.add_handler(drone_handler)
+        self.logger.debug(f"Adding overview widget for {name}")
+        drone_status_widget = DroneOverview(drone, UPDATE_RATE, self.logger)
+        self.drone_widgets[name] = drone_status_widget
+        await status_field.mount(drone_status_widget)
+
+    async def _remove_drone_object(self, name):
+        try:
+            await self.drone_widgets[name].remove()
+        except KeyError:
+            pass
+
     async def action_stop(self, names):
         stop_app = False
         if not names:
@@ -572,6 +608,7 @@ class CommandScreen(Screen):
     def _on_mount(self, event: events.Mount) -> None:
         super()._on_mount(event)
         self.query_one("#output", expect_type=Log).can_focus = False
+        self.dm.start()
 
     def compose(self):
         """ Creates the screen object

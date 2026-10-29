@@ -5,6 +5,7 @@ import logging
 import math
 import numpy as np
 import time
+from typing import Any
 
 import mavsdk
 from mavsdk.asyncio import Mavsdk, Configuration, System
@@ -18,7 +19,7 @@ from mavsdk.asyncio.plugins.param import ParamAsync
 from mavsdk.asyncio.plugins.camera import CameraAsync
 from mavsdk.asyncio.plugins.gimbal import GimbalAsync
 
-from dronemanager.comm_protocols.core import DroneComProtocol
+from dronemanager.drone import DroneComProtocol
 from dronemanager.drone import Battery, Drone, DroneConfig, DroneParams, FlightMode, FixType
 from dronemanager.navigation.core import WayPointType, Waypoint
 from dronemanager.navigation.directtargetgenerator import DirectTargetGenerator
@@ -28,25 +29,14 @@ from dronemanager.utils import relative_gps, coroutine_awaiter
 from dronemanager.utils import parse_address
 
 
-# TODO: Discover systems, handle systems, how to do connections, everything
-# TODO: Treat systems with autopilot as drones
-
-class MAVSystemObject:
-    def __init__(self, system: System, system_id: int, has_fc: bool):
-        self.system = system
-        self.system_id = system_id
-        self.has_fc = has_fc
-        self.direct = MavlinkDirectAsync(self.system)
-        self.param = ParamAsync(self.system)
-        self.telemetry = TelemetryAsync(self.system)
-        self.action = ActionAsync(self.system)
-        self.offboard = OffboardAsync(self.system)
-        self.manual = ManualControlAsync(self.system)
-        self.camera = CameraAsync(self.system)
-        self.gimbal = GimbalAsync(self.system)
+# TODO: Complete drone connection, object handling, etc...
+# TODO: Add auto-connection to drone if there is only one system at a connection within a certain timeframe.
 
 
 class MAVSDKComm(DroneComProtocol):
+
+    NAME = "mav"
+
     def __init__(self, logger, system_id: int, component_id: int):
         super().__init__(logger)
         self.system_id = system_id
@@ -61,11 +51,11 @@ class MAVSDKComm(DroneComProtocol):
         self.running_tasks.add(system_checker_awaiter)
 
         # Individual conn and system attributes
-        self.conn_handles = set()
-        self.systems: dict[int, MAVSystemObject] = {}
+        self.conn_handles: dict[str, Any] = {}
+        self.systems: dict[int, MAVSDKDrone] = {}
 
-    async def add_connection(self, conn_string):
-        scheme, loc, appendix = parse_address(string=conn_string)
+    async def add_connection(self, connection_string):
+        scheme, loc, appendix = parse_address(string=connection_string)
         if scheme == "udp":
             if loc == "0.0.0.0" or loc == "":
                 scheme = "udpin"
@@ -76,9 +66,45 @@ class MAVSDKComm(DroneComProtocol):
         else:
             raise NotImplementedError("Only UDP and serial connections are implemented for MAVSDK.")
         mavsdk_conn_string = f"{scheme}://{loc}:{appendix}"
+        if mavsdk_conn_string in self.conn_handles:
+            self.logger.debug(f"Connection {mavsdk_conn_string} already exists")
+            return None
         self.logger.debug(f"Adding connection {mavsdk_conn_string}")
-        conn_handle = await self.mavsdk.add_any_connection(mavsdk_conn_string)
-        self.conn_handles.add(conn_handle)
+        conn_handle = None
+        try:
+            conn_handle = await self.mavsdk.add_any_connection(mavsdk_conn_string)
+            self.conn_handles[mavsdk_conn_string] = conn_handle
+            return None
+        except Exception as e:
+            self.logger.debug(repr(e), exc_info=True)
+            if conn_handle is not None:
+                await self.mavsdk.remove_connection(conn_handle)
+            raise
+
+    async def remove_connection(self, identifier):
+        raise NotImplementedError("Manually removing connections is not supported, as there is no good way to prevent "
+                                  "live drones from being disconnected with it.")
+        # This function is spicy, as there is no robust way to associate drones and connections
+        #await self.mavsdk.remove_connection(self.conn_handles[identifier])
+
+    async def discovered_drones(self):
+        return [sysobj for sysobj in self.systems.values()]
+
+    async def discovered_other(self):
+        raise NotImplementedError
+
+    async def add_drone(self, drone_name: str, system_id: str, config: DroneConfig):
+        drone = self.systems[int(system_id)]
+        if drone.initialized:
+            self.logger.warning(f"Couldn't add drone {drone_name} for ID {system_id} as a drone with that ID already"
+                                f"exists: {drone.name}!")
+            return None
+        drone.initialize(drone_name, config=config)
+        return drone
+
+    async def remove_drone(self, drone_name: str):
+        """Dummy implementation, as MAVSDK does not keep track of the drone objects."""
+        return True
 
     async def new_system_handler(self):
         async for _ in self.mavsdk.on_new_system():
@@ -87,27 +113,22 @@ class MAVSDKComm(DroneComProtocol):
                 if sys_id in self.systems:
                     # Check that the system objects are identical
                     if system != self.systems[sys_id].system:
-                        self.logger.warning(f"Got two different system objects with the same system ID: {sys_id}!")
+                        pass
+                        #self.logger.debug(f"Got two different system objects with the same system ID: {sys_id}!")
+                        #  It appears that the system objects change everytime this list gets updated, which happens everytime a system is discovered or lost
+                        #  Seems to spawn a new system object, but also, the original system object maybe still works? At least the connected state still updates.
+                        #  Should we deconstruct and reconstruct the drone objects everytime the hearbeats time out? Only the plugin objects?
                 else:
                     await self.add_system(system)
 
     async def add_system(self, system: System):
         sys_id = await system.get_system_id()
-        has_fc = await system.has_autopilot()
-        self.logger.info(f"Adding new system {sys_id} ...")
-        mavobj = MAVSystemObject(system, system_id=sys_id, has_fc=has_fc)
-        self.systems[sys_id] = mavobj
+        self.logger.info(f"Discovered new system with ID {sys_id}.")
+        drone = MAVSDKDrone(self, system, system_id=sys_id)
+        self.systems[sys_id] = drone
 
-    async def list_discovered_drones(self):
-        drone_system_objs = [sysobj for sysobj in self.systems.values() if sysobj.has_fc]
-        log_strings = []
-        for sysobj in drone_system_objs:
-            log_strings.append(f"\nSystem_id: {sysobj.system_id}, connected: {await sysobj.system.is_connected()}")
-        log_string = "\n".join(log_strings)
-        self.logger.info(f"Discovered following drones:\n{log_string}")
-        return drone_system_objs
-
-    def add_drone(self, system):
+    async def discovered_systems(self):
+        return self.systems.values()
 
     def _log_callback(self, level, message, file, line):
         if level == 0:
@@ -118,18 +139,25 @@ class MAVSDKComm(DroneComProtocol):
             log_level = logging.WARN
         else:
             log_level = logging.ERROR
-        self.logger.log(log_level, f"{message}, {file, line}")
+        self.logger.log(log_level, f"{message}")
         return True
 
     async def close(self):
-        super().close()
-        while len(self.conn_handles) > 0:
-            conn_handle = self.conn_handles.pop()
-            await self.mavsdk.remove_connection(conn_handle)
-        self.mavsdk.destroy()
+        # Check that we don't have any drones connected, do not close if we do
+        can_close = True
+        for system in self.systems.values():
+            if system.initialized:
+                can_close = False
+                break
+        if can_close:
+            super().close()
+            while len(self.conn_handles) > 0:
+                _, conn_handle = self.conn_handles.popitem()
+                await self.mavsdk.remove_connection(conn_handle)
+            self.mavsdk.destroy()
 
 
-class DroneMAVSDK(Drone):
+class MAVSDKDrone(Drone):
 
     VALID_FLIGHTMODES = {"hold", "offboard", "return", "land", "takeoff", "position", "altitude"}
     # This attribute is for checking which flight modes can be changed into manually
@@ -141,25 +169,32 @@ class DroneMAVSDK(Drone):
     # What type of path setpoints this classes fly_<> commands can follow. This limits what Trajectory generators
     # can be used.
 
-    MAV_LOGGERS = set()
+    def __init__(self, comm_protocol: MAVSDKComm, system: System, system_id: int):
+        super().__init__(comm_protocol, system_id)
+        self.system: System = system
+        self.fc_component_id: int = -1  # Actual component ids are always positive, so this is a safe "invalid" number.
 
-    def __init__(self, name: str, gcs_ident, comm_protocol: MAVSDKComm, config: DroneConfig | None = None):
-        # TODO: Currently exceptions in this block are not logged to drone manager, as the handler is added only after
-        #  connecting.
-        super().__init__(name, gcs_ident, comm_protocol=comm_protocol, config=config)
-        self.system: System = None
+        # Temporary attributes for new mavsdk version
+        self._mavdirect = MavlinkDirectAsync(self.system)
+        self._mavparam = ParamAsync(self.system)
+        self._mavtelem = TelemetryAsync(self.system)
+        self._mavaction = ActionAsync(self.system)
+        self._mavoffboard = OffboardAsync(self.system)
+        self._mavmanual = ManualControlAsync(self.system)
+        self._mavcamera = CameraAsync(self.system)
+        self._mavgimbal = GimbalAsync(self.system)
+
         self._is_connected: bool = False
         self._is_armed: bool = False
         self._flightmode: FlightMode = FlightMode.UNKNOWN
         self._in_air: bool = False
         self._gps_info: FixType = FixType.NO_GPS
-        self._position_g: np.ndarray = np.zeros((4,))  # Latitude, Longitude, AMSL, Relative altitude to takeoff
-        self._position_ned: np.ndarray = np.zeros((3,))     # NED
-        self._velocity: np.ndarray = np.zeros((3,))         # NED
-        self._attitude: np.ndarray = np.zeros((3,))         # Roll, pitch and yaw, with positives right up and right.
+        self._position_g: np.ndarray = np.zeros((4,), dtype=np.float64)     # Latitude, Longitude, AMSL, Relative altitude to takeoff
+        self._position_ned: np.ndarray = np.zeros((3,), dtype=np.float64)   # NED
+        self._velocity: np.ndarray = np.zeros((3,), dtype=np.float64)       # NED
+        self._attitude: np.ndarray = np.zeros((3,), dtype=np.float64)       # Roll, pitch and yaw, with positives right up and right.
         self._heading: float = math.nan
         self._batteries: dict[int, Battery] = {}
-        self._running_tasks = set()
 
         self._have_drone_info = asyncio.Event()
 
@@ -167,29 +202,18 @@ class DroneMAVSDK(Drone):
         self._message_listeners: dict[tuple[str, int], set] = dict()
         self._ack_listeners: dict[tuple[int, int, int, int, int], list] = dict()
 
-        # Temporary attributes for new mavsdk version
-        self._conn_handle = None
-        self._mavdirect: MavlinkDirectAsync = None
-        self._mavparam: ParamAsync = None
-        self._mavtelem: TelemetryAsync = None
-        self._mavaction: ActionAsync = None
-        self._mavoffboard: OffboardAsync = None
-        self._mavmanual: ManualControlAsync = None
-        self._mavcamera: CameraAsync = None
-        self._mavgimbal: GimbalAsync = None
+        # Set up the connect check
+        self._running_tasks.add(asyncio.create_task(self._connect_check()))
 
-        # How often (per second) we request position information from the drone. The same interval is used by path
-        # planning algorithms for their time resolution.
-        self.position_update_rate = config.position_rate
-
+    def initialize(self, name, config: DroneConfig):
+        super().initialize(name, config)
         # Init path generator
         try:
-            #self.path_generator = GMP3Generator(self, 1/self.position_update_rate, self.logger)
+            # self.path_generator = GMP3Generator(self, 1/self.position_update_rate, self.logger)
             self.path_generator = DirectTargetGenerator(self, self.logger, WayPointType.POS_NED)
         except Exception as e:
             self.logger.error("Couldn't initialize path generator due to an exception!")
             self.logger.debug(repr(e), exc_info=True)
-
         # Init path follower
         try:
             self.path_follower = RuckigOfflineFollower(self, self.logger, 1 / self.position_update_rate,
@@ -202,7 +226,7 @@ class DroneMAVSDK(Drone):
                                                        max_yaw_vel=self.config.max_yaw_vel,
                                                        max_yaw_acc=self.config.max_yaw_acc,
                                                        max_yaw_jerk=self.config.max_yaw_jerk)
-            #self.path_follower = DirectSetpointFollower(self, self.logger, 1/self.position_update_rate,
+            # self.path_follower = DirectSetpointFollower(self, self.logger, 1/self.position_update_rate,
             #                                                  WayPointType.POS_VEL_NED)
         except Exception as e:
             self.logger.error("Couldn't initialize path follower due to an exception!")
@@ -210,6 +234,17 @@ class DroneMAVSDK(Drone):
 
         attr_string = "\n   ".join(["{}: {}".format(key, value) for key, value in self.__dict__.items()])
         self.logger.debug(f"Initialized Drone {self.name}, {self.__class__.__name__}:\n   {attr_string}")
+
+        self._running_tasks.add(asyncio.create_task(self._process_messages()))
+        self._get_drone_info()
+        self._running_tasks.add(asyncio.create_task(self._configure_message_rates()))
+        self._schedule_update_tasks()
+
+        param_load_task = asyncio.create_task(self.load_parameters())
+        param_load_task_awaiter = asyncio.create_task(coroutine_awaiter(param_load_task, self.logger))
+        self._running_tasks.add(param_load_task)
+        self._running_tasks.add(param_load_task_awaiter)
+        self.initialized = True
 
     @property
     def is_connected(self) -> bool:
@@ -232,7 +267,7 @@ class DroneMAVSDK(Drone):
         return self._gps_info
 
     @property
-    def position_global(self) -> np.ndarray:
+    def position_global(self) -> np.ndarray[np.float64]:
         return self._position_g[:3]
 
     @property
@@ -240,11 +275,11 @@ class DroneMAVSDK(Drone):
         return self._position_g[3]
 
     @property
-    def position_ned(self) -> np.ndarray:
+    def position_ned(self) -> np.ndarray[np.float64]:
         return self._position_ned
 
     @property
-    def velocity(self) -> np.ndarray:
+    def velocity(self) -> np.ndarray[np.float64]:
         return self._velocity
 
     @property
@@ -252,7 +287,7 @@ class DroneMAVSDK(Drone):
         return np.linalg.norm(self._velocity, 2)
 
     @property
-    def attitude(self) -> np.ndarray:
+    def attitude(self) -> np.ndarray[np.float64]:
         return self._attitude
 
     @property
@@ -262,65 +297,6 @@ class DroneMAVSDK(Drone):
     @property
     def batteries(self) -> dict[int, Battery]:
         return self._batteries
-
-    async def connect(self, drone_address, *args, log_telemetry=None) -> bool:
-        # If we are on windows, we can't rely on the MAVSDK to have the binary installed.
-        # If we use serial, loc is the path and appendix the baudrate, if we use udp it is IP and port
-        scheme, loc, appendix = parse_address(string=drone_address)
-        self.drone_addr = f"{scheme}://{loc}:{appendix}"
-        self.logger.debug(f"Connecting to drone {self.name} @ {self.drone_addr}")
-        if scheme == "serial":
-            mavsdk_passthrough_string = f"serial://{loc}"
-        else:
-            mavsdk_passthrough_string = f"{scheme}://{loc}:{appendix}"
-
-        if log_telemetry is not None:
-            self.config.log_telemetry = log_telemetry
-
-        try:
-            old_ids = [await system.get_system_id() for system in await mavsdk.get_systems()]
-            self._conn_handle = await mavsdk.add_any_connection(mavsdk_passthrough_string)
-            async for _ in mavsdk.on_new_system():
-                break
-            for system in await mavsdk.get_systems():
-                system_id = await system.get_system_id()
-                if system_id not in old_ids:
-                    self.system = system
-            #self.system = await mavsdk.first_autopilot(10.0)
-            while not await self.system.is_connected():
-                await asyncio.sleep(0.1)
-            if await self.system.is_connected():
-
-                self._mavdirect = MavlinkDirectAsync(self.system)
-                self._mavparam = ParamAsync(self.system)
-                self._mavtelem = TelemetryAsync(self.system)
-                self._mavaction = ActionAsync(self.system)
-                self._mavoffboard = OffboardAsync(self.system)
-                self._mavmanual = ManualControlAsync(self.system)
-                self._mavcamera = CameraAsync(self.system)
-                self._mavgimbal = GimbalAsync(self.system)
-
-                self._running_tasks.add(asyncio.create_task(self._process_messages()))
-                self._get_drone_info()
-                await self._configure_message_rates()
-                await self._schedule_update_tasks()
-                self.config.address = self.drone_addr
-
-                param_load_task = asyncio.create_task(self.load_parameters())
-                param_load_task_awaiter = asyncio.create_task(coroutine_awaiter(param_load_task, self.logger))
-                self._running_tasks.add(param_load_task)
-                self._running_tasks.add(param_load_task_awaiter)
-                self.logger.debug(f"Connected!")
-                self.logger.info(f"Connected to {await self.system.get_system_id()}")
-                self._is_connected = True
-                return True
-            else:
-                self.logger.info("Failed to await connected state?")
-        except Exception as e:
-            self.logger.debug(f"Exception during connection: {repr(e)}", exc_info=True)
-            if self._conn_handle is not None:
-                await mavsdk.remove_connection(self._conn_handle)
-        return False
 
     def add_message_callback(self, message_name, callback):
         assert not inspect.isawaitable(callback), "Message callbacks can't be coroutines!"
@@ -351,9 +327,7 @@ class DroneMAVSDK(Drone):
 
     def _listen_ack(self, command_msg_id, target_component_id):
         fut = asyncio.Future()
-        drone_system_id, drone_component_id = self.drone_identifier
-        system_id, component_id = self.gcs_ident
-        msg_tuple = (command_msg_id, drone_system_id, target_component_id, system_id, component_id)
+        msg_tuple = (command_msg_id, self.drone_identifier, target_component_id, self.comm.system_id, self.comm.component_id)
         if msg_tuple in self._ack_listeners:
             self._ack_listeners[msg_tuple].append(fut)
         else:
@@ -361,10 +335,8 @@ class DroneMAVSDK(Drone):
         return fut
 
     def send_command(self, command_msg_id, target_component_id, confirmation, param1=0, param2=0, param3=0, param4=0, param5=0, param6=0, param7=0):
-        drone_system_id, drone_component_id = self.drone_identifier
-        system_id, component_id = self.gcs_ident
         fields = {
-            "target_system": drone_system_id,
+            "target_system": self.drone_identifier,
             "target_component": target_component_id,
             "command": command_msg_id,
             "confirmation": confirmation,
@@ -377,7 +349,7 @@ class DroneMAVSDK(Drone):
             "param7": param7,
         }
         self.logger.debug(f"Sending command {json.dumps(fields)}")
-        msg = MavlinkMessage("COMMAND_LONG", system_id, component_id, drone_system_id, target_component_id,
+        msg = MavlinkMessage("COMMAND_LONG", self.comm.system_id, self.comm.component_id, self.drone_identifier, target_component_id,
                              fields_json=json.dumps(fields))
         send_task = asyncio.create_task(self.send_message(msg))
         self._running_tasks.add(send_task)
@@ -395,9 +367,9 @@ class DroneMAVSDK(Drone):
                 if self.config.log_telemetry:
                     self.telem_logger.debug(f"Received {message.message_name} from {message.system_id, message.component_id} to {message.target_system_id, message.target_component_id}: {message.fields_json}")
                 # Check that the message is for us
-                if (self.drone_identifier is None or message.system_id == self.drone_identifier[0]) \
-                        and (message.target_system_id == 0 or message.target_system_id == self.gcs_ident[0]) \
-                        and (message.target_component_id == 0 or message.target_component_id == self.gcs_ident[1]):
+                if (self.drone_identifier is None or message.system_id == self.drone_identifier) \
+                        and (message.target_system_id == 0 or message.target_system_id == self.comm.system_id) \
+                        and (message.target_component_id == 0 or message.target_component_id == self.comm.component_id):
                     # Do command acks
                     if message.message_name == "COMMAND_ACK":
                         fields = json.loads(message.fields_json, strict=False)
@@ -431,9 +403,10 @@ class DroneMAVSDK(Drone):
             self.logger.debug(repr(e), exc_info=True)
 
     def _get_drone_info_callback(self, message):
-        if message.component_id == 1:
-            self.drone_identifier = (message.system_id, message.component_id)
-            fields = json.loads(message.fields_json)
+        fields = json.loads(message.fields_json)
+        if "autopilot" in fields:
+            if fields["autopilot"] == 8:
+                self.fc_component_id = message.component_id
             match fields["autopilot"]:
                 case 3:
                     self.autopilot = "ArduPilot"
@@ -459,7 +432,7 @@ class DroneMAVSDK(Drone):
                 raw_params[param.name] = (param.value, str)
             drone_params = DroneParams(raw_params)
             try:
-                await asyncio.wait_for(self._have_drone_info.wait(), 3)
+                await asyncio.wait_for(self._have_drone_info.wait(), 5)
                 if self.autopilot == "PX4":
                     drone_params.max_h_vel = drone_params.raw['MPC_XY_VEL_MAX'][0]
                     drone_params.max_up_vel = drone_params.raw['MPC_Z_VEL_MAX_UP'][0]
@@ -486,20 +459,24 @@ class DroneMAVSDK(Drone):
         # TODO: Should probably do some kind of parameter checking: If the drone velocity and acceleration parameters are
         #  lower than the ones set in our config, algorithms might not work properly
 
-    async def disconnect(self, force=False):
+    async def shutdown(self, force=False):
         self.clear_queue()
         self.cancel_action()
         if force or not self._is_armed:
             if force:
                 self.logger.debug("Force disconnecting from drone...")
-            await self.stop_execution()
-            return True
+            # Deactivate path follower
+            if self.path_follower:
+                if self.path_follower.is_active:
+                    await self.path_follower.deactivate()
+                self.path_follower.close()
+            # Cleanup other stuff that doesn't reliably get cleaned up otherwise
+            await super().shutdown(force=force)
+            self.initialized = False
         else:
             self.logger.warning("Can't disconnect from an armed drone!")
-            return False
 
-    async def _schedule_update_tasks(self) -> None:
-        self._running_tasks.add(asyncio.create_task(self._connect_check()))
+    def _schedule_update_tasks(self) -> None:
         self._running_tasks.add(asyncio.create_task(self._arm_check()))
         self._running_tasks.add(asyncio.create_task(self._flightmode_check()))
         self._running_tasks.add(asyncio.create_task(self._inair_check()))
@@ -532,6 +509,8 @@ class DroneMAVSDK(Drone):
             await asyncio.sleep(5)
 
     async def _connect_check(self):
+        # Check initial state, then listen to updates.
+        self._is_connected = await self.system.is_connected()
         async for connected in self.system.is_connected_state():
             self._is_connected = connected
 
@@ -659,8 +638,8 @@ class DroneMAVSDK(Drone):
         self.return_position = Waypoint(WayPointType.POS_NED, pos=self.position_ned, yaw=self.attitude[2])
         return res
 
-    def _get_pos_ned_yaw(self) -> np.ndarray:
-        pos_yaw = np.zeros((4,), dtype=float)
+    def _get_pos_ned_yaw(self) -> np.ndarray[np.float64]:
+        pos_yaw = np.zeros((4,), dtype=np.float64)
         pos_yaw[:3] = self.position_ned
         pos_yaw[3] = self.attitude[2]
         return pos_yaw
@@ -1079,19 +1058,6 @@ class DroneMAVSDK(Drone):
     async def set_manual_control_input(self, x, y, z, r):
         result = await self._error_wrapper(self._mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
         return result
-
-    async def stop_execution(self):
-        """ Stops all coroutines, closes all connections, etc.
-
-        :return:
-        """
-        # Deactivate path follower
-        if self.path_follower:
-            if self.path_follower.is_active:
-                await self.path_follower.deactivate()
-            self.path_follower.close()
-        # Cleanup other stuff that doesn't reliably get cleaned up otherwise
-        await super().stop_execution()
 
     async def stop(self):
         # Override whatever else is going on and land

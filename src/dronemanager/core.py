@@ -1,34 +1,34 @@
 import asyncio
 import datetime
 import os
-import socket
 import sys
+import time
 import json
 import copy
 import typing
 from collections.abc import Collection
-from asyncio.exceptions import TimeoutError, CancelledError
 
 import traceback
 from typing import Callable
 
 import dronemanager
-from dronemanager.comm_protocols.core import DroneComProtocol
-from dronemanager.comm_protocols.mavsdk import MAVSDKComm
-from dronemanager.drone import Drone, DroneConfigs, DroneConfig
+import dronemanager.drone
+from dronemanager.comm_protocols.mav import MAVSDKComm
+from dronemanager.drone import Drone, DroneComProtocol, DroneConfigs, DroneConfig
 from dronemanager.navigation.core import Waypoint, Fence
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 from dronemanager.plugin import PluginLoader
-from dronemanager.utils import COMMON_FORMATTER, LOG_DIR, get_config, parse_address
+from dronemanager.utils import COMMON_FORMATTER, LOG_DIR, get_config
 
 import logging
 
-# TODO: Fence class discovery
+# TODO: Fence class discovery, probably make them plugins
 FENCES = {
     "localrect": RectLocalFence,
 }
 
-# TODO: Trajectory generator/follower discovery and setting/unsetting functions, trajectory follower deactivation
+# TODO: Trajectory generator/follower discovery and setting/unsetting functions, trajectory follower deactivation,
+#  probably make them plugins too
 
 pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s - %(message)s', datefmt="%H:%M:%S")
 
@@ -39,19 +39,21 @@ class DMConfig:
 
     """
 
-    CORE_ENTRIES = ["drones", "mav_system_id", "mav_component_id", "plugin_settings", "default_plugins", "testing"]
+    CORE_ENTRIES = ["drones", "mav_system_id", "mav_component_id", "plugin_settings", "default_plugins", "default_comm_protocols"]
     # These must be present
 
     def __init__(self, drone_configs: DroneConfigs, mav_system_id: int = 246, mav_component_id: int = 190,
-                 default_plugins: list[str] | None = None, testing: bool = False,
+                 default_plugins: list[str] | None = None, default_comm_protocols: list[str] | None = None,
                  plugin_settings: dict[str, dict[str, typing.Any]] | None = None, **kwargs):
         self.drone_configs: DroneConfigs = drone_configs
         self.mav_system_id: int = mav_system_id
         self.mav_component_id: int = mav_component_id
-        self.testing = testing
         if default_plugins is None:
             default_plugins = []
         self.default_plugins = default_plugins
+        if default_comm_protocols is None:
+            default_comm_protocols = []
+        self.default_protocols = default_comm_protocols
         if plugin_settings is None:
             plugin_settings = {}
         self.plugin_settings: dict[str, dict[str, typing.Any]] = plugin_settings
@@ -72,17 +74,18 @@ class DMConfig:
             configs = DroneConfigs(configs)
             mav_sys_id = json_obj["mav_system_id"]
             mav_comp_id = json_obj["mav_component_id"]
-            testing = json_obj["testing"]
             if "plugin_settings" in json_obj:
                 plugin_settings = json_obj["plugin_settings"]
             if "default_plugins" in json_obj:
                 default_plugins = json_obj["default_plugins"]
+            if "default_comm_protocols" in json_obj:
+                default_protocols = json_obj["default_comm_protocols"]
             extra_entries = {}
             for key in json_obj:
                 if key not in cls.CORE_ENTRIES:
                     extra_entries[key] = json_obj[key]
         return cls(configs, mav_system_id=mav_sys_id, mav_component_id=mav_comp_id, plugin_settings=plugin_settings,
-                   default_plugins=default_plugins, testing=testing, **extra_entries)
+                   default_plugins=default_plugins, default_comm_protocols=default_protocols, **extra_entries)
 
     def to_file(self, filepath: str):
         with open(filepath, "wt") as f:
@@ -97,8 +100,6 @@ class DroneManager:
     Core class of the library.
 
     """
-    # TODO: Handle MAVSDK crashes - Not sure at all what causes them
-    # TODO: Refactor functions other than fly_to to also use the list wrapping convenience
 
     def __init__(self, logger=None, log_to_console=True, console_log_level=logging.INFO):
         self.drones: dict[str, Drone] = {}
@@ -136,109 +137,115 @@ class DroneManager:
 
         self.comm_protocols: dict[str, DroneComProtocol] = {}
 
-        # TODO: Make this dynamic over CLI
-        self.comm_protocols["mavsdk"] = MAVSDKComm(self.logger, system_id=self.system_id, component_id=self.component_id)
-
         self.plugin_loader = PluginLoader(self, self.logger, "PluginLoader")
         self.logger.info(f"Starting DroneManager version {dronemanager.__version__}")
 
-    async def connect_to_drone(self,
-                               name: str,
-                               drone_class,
-                               drone_address: str| None = None,
-                               timeout: float = 30,
-                               telemetry_frequency: float | None = None,
-                               log_telemetry = True):
-        if drone_address is None:
-            drone_address = self.drone_configs["default"].address
-        try:
-            scheme, parsed_addr, parsed_port = parse_address(string=drone_address)
-        except Exception as e:
-            self.logger.warning("Couldn't connect due to an exception parsing the address")
-            self.logger.debug(repr(e), exc_info=True)
-            return False
-        if scheme == "serial":
-            self.logger.info(f"Queuing connection to drone {name} @{scheme}://{parsed_addr} with baud {parsed_port}")
-        else:
-            self.logger.info(f"Queuing connection to drone {name} @{scheme}://{parsed_addr}:{parsed_port}")
-        drone = None
-        async with self.drone_lock:
-            try:
-                # Ensure that for each drone there is a one-to-one-to-one relation between name, mavsdk port and drone
-                if name in self.drones:
-                    self.logger.warning(f"A drone called {name} already exists. Each drone must have a unique name.")
-                    return False
-                # Check that we don't already have this drone connected.
-                for other_name in self.drones:
-                    other_drone = self.drones[other_name]
-                    _, other_addr, other_port = parse_address(string=other_drone.drone_addr)
-                    if parsed_addr == other_addr and parsed_port == other_port:
-                        self.logger.warning(f"{other_name} is already connected to drone with address {drone_address}.")
-                        return False
+    async def start(self):
+        await asyncio.create_task(self._load_default_plugins())
+        await asyncio.create_task(self._load_default_comm_protocols())
 
-                config = copy.deepcopy(self.drone_configs["default"])
-                specific_config: DroneConfig = self.drone_configs[name]
-                if specific_config:
-                    self.logger.debug("Found drone config, using parameters...")
-                    for key, value in specific_config.__dict__.items():
-                        setattr(config, key, value)
-                if telemetry_frequency is not None:
-                    if telemetry_frequency < 2:
-                        self.logger.error("Can't have a telemetry rate of less than 2!")
-                    else:
-                        config.position_rate = telemetry_frequency
-                drone = drone_class(name, (self.system_id, self.component_id), config=config)
-                connected = None
+    async def _load_default_plugins(self):
+        plugin_tasks = []
+        for plugin_name in self.config.default_plugins:
+            plugin_tasks.append(asyncio.create_task(self.load(plugin_name)))
+        await asyncio.gather(*plugin_tasks)
+        self.logger.info(f"Loaded startup plugins: {self.plugins}")
+
+    async def _load_default_comm_protocols(self):
+        protocol_tasks = []
+        for protocol_name in self.config.default_protocols:
+            protocol_tasks.append(asyncio.create_task(self.add_comm_protocol(protocol_name)))
+        await asyncio.gather(*protocol_tasks)
+        self.logger.info(f"Loaded default comm protocols: {self.comm_protocols}")
+
+    async def add_comm_protocol(self, name):
+        # TODO: Comm discovery? Make them plugins?
+        if name == "mav":
+            self.comm_protocols[MAVSDKComm.NAME] = MAVSDKComm(self.logger, system_id=self.system_id,
+                                                              component_id=self.component_id)
+        else:
+            raise ValueError(f"No comm protocol {name}")
+
+    async def list_potential_drones(self, comm_protocol: str):
+        return await self.comm_protocols[comm_protocol].discovered_drones()
+
+    async def list_non_drones(self, comm_protocol: str):
+        return await self.comm_protocols[comm_protocol].discovered_other()
+
+    async def add_conn(self, comm_protocol: str, conn_string: str):
+        return await self.comm_protocols[comm_protocol].add_connection(conn_string)
+
+    async def remove_conn(self, comm_protocol: str, identifier: str):
+        return await self.comm_protocols[comm_protocol].remove_connection(identifier)
+
+    async def add_drone(self, comm_protocol: str, drone_name: str, drone_identifier: str, drone_config: DroneConfig | None = None, log_telemetry: bool | None = None, telemetry_frequency: float | None = None):
+        # Check for duplicate name
+        self.logger.info(f"Queuing addition of {comm_protocol} drone {drone_identifier} as {drone_name}.")
+        if drone_name in self.drones:
+            self.logger.warning(f"A drone called {drone_name} already exists. Each drone must have a unique name.")
+            return False
+        # Use default or named config if none is provided as argument.
+        if drone_config is None:
+            drone_config = copy.deepcopy(self.drone_configs["default"])
+            specific_config: DroneConfig = self.drone_configs[drone_name]
+            if specific_config:
+                self.logger.debug("Found drone config, using parameters...")
+                for key, value in specific_config.__dict__.items():
+                    setattr(drone_config, key, value)
+        # Override config values if parameters are set here.
+        if telemetry_frequency is not None:
+            if telemetry_frequency < 2:
+                self.logger.error("Can't have a telemetry rate of less than 2!")
+            else:
+                drone_config.position_rate = telemetry_frequency
+        if log_telemetry is not None:
+            drone_config.log_telemetry = log_telemetry
+
+        async with self.drone_lock:
+            self.logger.info(f"Adding {comm_protocol} drone {drone_identifier} as {drone_name}...")
+            new_drone = await self.comm_protocols[comm_protocol].add_drone(drone_name, drone_identifier, drone_config)
+            if new_drone is not None:
+                self.drones[drone_name] = new_drone
+            else:
+                return False
+            for func in self._on_drone_connect_coros:
                 try:
-                    if scheme == "serial":
-                        self.logger.info(f"Trying to connect to drone {name} @{scheme}://{parsed_addr} with baud {parsed_port}")
-                    else:
-                        self.logger.info(f"Trying to connect to drone {name} @{scheme}://{parsed_addr}:{parsed_port}")
-                    connected = await asyncio.wait_for(drone.connect(drone_address, log_telemetry=log_telemetry),
-                                                       timeout)
-                except (CancelledError, TimeoutError, OSError, socket.gaierror, AssertionError) as e:
-                    if isinstance(e, CancelledError):
-                        self.logger.info(f"Aborting connection attempt to {name}")
-                    elif isinstance(e, TimeoutError):
-                        self.logger.warning(f"Connection attempts to {name} timed out!")
-                    elif isinstance(e, OSError) or isinstance(e, socket.gaierror):
-                        self.logger.error(f"Address error, probably due to invalid address")
-                        self.logger.debug(f"{repr(e)}", exc_info=True)
-                    else:
-                        self.logger.error("Connection failed due to an exception")
-                        self.logger.debug(f"{repr(e)}", exc_info=True)
-                    if isinstance(connected, asyncio.Task):
-                        connected.cancel()
-                    await self._remove_drone_object(name, drone)
+                    await asyncio.create_task(func(drone_name, new_drone))
+                except Exception as e:
+                    self.logger.error(f"Failed post-connection process: {repr(e)}")
+                    self.logger.debug(repr(e), exc_info=True)
+                    await self.disconnect(drone_name, force=True)
                     return False
-                if connected:
-                    self.logger.info(f"Connected to {name}!")
-                    self.drones[name] = drone
-                    for func in self._on_drone_connect_coros:
-                        try:
-                            await asyncio.create_task(func(name, drone))
-                        except Exception as e:
-                            self.logger.error(f"Failed post-connection process: {repr(e)}")
-                            self.logger.debug(repr(e), exc_info=True)
-                            await self._remove_drone_object(name, drone)
-                            return False
-                    return True
-                else:
-                    self.logger.warning(f"Failed to connect to drone {name}!")
-                    await self._remove_drone_object(name, drone)
-                    return False
-            except TimeoutError:
-                self.logger.warning(f"Connection attempts to {name} timed out!")
-                await self._remove_drone_object(name, drone)
-                return False
-            except Exception as e:
-                self.logger.error("Couldn't connect to the drone due to an exception: ", repr(e))
-                self.logger.debug(repr(e), exc_info=True)
-                if drone is not None:
-                    await self._remove_drone_object(name, drone)
-                return False
+            return True
+
+    async def connect_drone(self, name: str, comm_protocol: str | None = None, conn: str | None = None,
+                            timeout: float = 5, telemetry_frequency: float | None = None,
+                            log_telemetry: bool | None = None):
+        # Add connection, wait for a new drone to appear and add it under the given name.
+        # TODO: This and test it
+        # TODO: If the name is in the config, we should only add the drone if identifiers also match, and also use comm_protocol from config.
+        # All the config stuff
+        drone_config = copy.deepcopy(self.drone_configs["default"])
+        specific_config: DroneConfig = self.drone_configs[name]
+        if specific_config:
+            self.logger.debug("Found drone config, using parameters...")
+            for key, value in specific_config.__dict__.items():
+                setattr(drone_config, key, value)
+
+        old_drone_idents = [drone.drone_identifier for drone in await self.comm_protocols[comm_protocol].discovered_drones()]
+        start_time = time.time()
+        await self.add_conn(comm_protocol=comm_protocol, conn_string=conn)
+        # Check every half second or so if there is a new drone
+        while time.time() - start_time < timeout:
+            await asyncio.sleep(0.5)
+            new_drones = await self.comm_protocols[comm_protocol].discovered_drones()
+            if len(new_drones) > len(old_drone_idents):
+                for new_drone in new_drones:
+                    if new_drone.drone_identifier not in old_drone_idents:
+                        await self.add_drone(comm_protocol, name, new_drone.drone_identifier, drone_config=drone_config)
 
     async def disconnect(self, names: str | Collection[str], force=False):
+        # Remove drone(s) from dronemanager.
         if isinstance(names, str):
             names = [names]
         self.logger.info(f"Disconnecting {names} ...")
@@ -249,13 +256,12 @@ class DroneManager:
                 except KeyError:
                     continue
                 try:
-                    disconnected = await drone.disconnect(force=force)
+                    await drone.shutdown(force=force)
                 except Exception as e:
-                    disconnected = False
                     self.logger.error(f"An error occurred during disconnect for {name}")
                     self.logger.debug(repr(e), exc_info=True)
-                if disconnected:
-                    await self._remove_drone_object(name, drone)
+                else:
+                    await self._remove_drone_object(name)
                     self.logger.info(f"Disconnected {name}")
 
     async def _multiple_drone_action(self, action, names: str | Collection[str], start_string, *args, schedule=False, **kwargs):
@@ -512,7 +518,7 @@ class DroneManager:
         except KeyError:
             pass
 
-    async def _remove_drone_object(self, name, drone: Drone):
+    async def _remove_drone_object(self, name):
         try:
             self.drones.pop(name)
         except KeyError:
@@ -522,9 +528,6 @@ class DroneManager:
                 await asyncio.create_task(func(name))
             except Exception as e:
                 self.logger.debug(repr(e), exc_info=True)
-        if drone is not None:
-            await drone.stop_execution()
-            del drone
 
     def add_remove_func(self, func):
         self._on_drone_removal_coros.add(func)
@@ -534,9 +537,9 @@ class DroneManager:
 
     async def close(self):
         await self.disconnect(self.drones)
-        await self.plugin_loader.close()
         for comm_protocol in self.comm_protocols.values():
             await comm_protocol.close()
+        await self.plugin_loader.close()
 
 # PLUGINS ##############################################################################################################
 
