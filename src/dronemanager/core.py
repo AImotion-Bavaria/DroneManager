@@ -173,7 +173,12 @@ class DroneManager:
         return await self.comm_protocols[comm_protocol].discovered_other()
 
     async def add_conn(self, comm_protocol: str, conn_string: str):
-        return await self.comm_protocols[comm_protocol].add_connection(conn_string)
+        res = await self.comm_protocols[comm_protocol].add_connection(conn_string)
+        if res:
+            self.logger.info(f"Added connection {conn_string} using {comm_protocol}!")
+        else:
+            self.logger.info(f"Connection {conn_string} already exists!")
+        return res
 
     async def remove_conn(self, comm_protocol: str, identifier: str):
         return await self.comm_protocols[comm_protocol].remove_connection(identifier)
@@ -245,7 +250,6 @@ class DroneManager:
         self.logger.debug(f"Old Drones: {old_drone_idents}")
         start_time = time.time()
         await self.add_conn(comm_protocol=comm_protocol, conn_string=conn)
-        self.logger.info(f"Added connection {conn} using {comm_protocol}")
         # Check every half second or so if there is a new drone
         drone_added = False
         while time.time() - start_time < timeout and not drone_added:

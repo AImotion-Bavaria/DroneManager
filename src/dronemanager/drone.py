@@ -61,7 +61,7 @@ class DroneComProtocol(ABC):
         cancel_running_tasks(self.running_tasks)
 
     @abstractmethod
-    async def add_connection(self, connection_string):
+    async def add_connection(self, connection_string) -> bool:
         """Add some kind of remote connection.
 
         For example, in MAVSDK, start listening on a port, or send heartbeats to a remote IP.
@@ -70,7 +70,8 @@ class DroneComProtocol(ABC):
         The connection string can also be used as an identifier to remove the connection again.
 
         Return values determine other behaviour by DroneManager in regard to this connection.
-        - A successful or already existing connection should return ``None``.
+        - Successfully adding a connection should return ``True``.
+        - An already existing connection should return ``False``.
         - A failed connection should raise an exception. This is used to inform the user, and so should contain
           relevant information.
         """

@@ -54,7 +54,7 @@ class MAVSDKComm(DroneComProtocol):
         self.conn_handles: dict[str, Any] = {}
         self.systems: dict[int, MAVSDKDrone] = {}
 
-    async def add_connection(self, connection_string):
+    async def add_connection(self, connection_string) -> bool:
         scheme, loc, appendix = parse_address(string=connection_string)
         if scheme == "udp":
             if loc == "0.0.0.0" or loc == "127.0.0.1":
@@ -68,13 +68,13 @@ class MAVSDKComm(DroneComProtocol):
         mavsdk_conn_string = f"{scheme}://{loc}:{appendix}"
         if mavsdk_conn_string in self.conn_handles:
             self.logger.debug(f"Connection {mavsdk_conn_string} already exists")
-            return None
+            return False
         self.logger.info(f"Adding connection {mavsdk_conn_string}")
         conn_handle = None
         try:
             conn_handle = await self.mavsdk.add_any_connection(mavsdk_conn_string)
             self.conn_handles[mavsdk_conn_string] = conn_handle
-            return None
+            return True
         except Exception as e:
             self.logger.debug(repr(e), exc_info=True)
             if conn_handle is not None:
@@ -750,7 +750,7 @@ class MAVSDKDrone(Drone):
                                     "Possible connection issue.")
                 return False
             else:
-                self.logger.info(f"New flight mode {self.flightmode}!")
+                self.logger.info(f"New flight mode {self.flightmode.name}!")
                 return True
 
     async def set_setpoint(self, setpoint: "Waypoint"):
