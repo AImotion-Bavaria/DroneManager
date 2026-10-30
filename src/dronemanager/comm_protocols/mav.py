@@ -57,7 +57,7 @@ class MAVSDKComm(DroneComProtocol):
     async def add_connection(self, connection_string):
         scheme, loc, appendix = parse_address(string=connection_string)
         if scheme == "udp":
-            if loc == "0.0.0.0" or loc == "":
+            if loc == "0.0.0.0" or loc == "127.0.0.1":
                 scheme = "udpin"
             else:
                 scheme = "udpout"
