@@ -264,19 +264,21 @@ class DroneManager:
                 new_drones = await self.comm_protocols[comm_protocol].discovered_drones()
                 for new_drone in new_drones:
                     new_drone_ident = str(new_drone.drone_identifier)
-                    if new_drone_ident not in old_drone_idents:
-                        self.logger.debug(f"Discovered drone {new_drone_ident}, checking match...")
-                        # If provided name was not in config, ignore drone_identifier and use any new drone.
-                        if not specific_config:
+                    self.logger.debug(f"Discovered drone {new_drone_ident}, checking match...")
+                    # If provided name was not in config, ignore drone_identifier and use any new drone.
+                    if not specific_config:
+                        if new_drone_ident not in old_drone_idents:
+                            self.logger.debug(f"No identifier specified, connecting to new drone {new_drone_ident}")
                             drone_config.drone_identifier = new_drone_ident
                             await self.add_drone(comm_protocol, name, new_drone_ident, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
                             drone_added = True
                             break
-                        else:
-                            if new_drone_ident == drone_config.drone_identifier:
-                                await self.add_drone(comm_protocol, name, new_drone_ident, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
-                                drone_added = True
-                                break
+                    # If provided name was in config, only connect to drone with matching identifier, even old.
+                    else:
+                        if new_drone_ident == drone_config.drone_identifier:
+                            await self.add_drone(comm_protocol, name, new_drone_ident, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
+                            drone_added = True
+                            break
                 # Last IDs are now the old IDs, to prevent issues if other drones were disconnected or connected while we were waiting.
                 old_drone_idents = [str(drone.drone_identifier) for drone in new_drones]
                 self.logger.debug(f"Old Drones: {old_drone_idents}")
