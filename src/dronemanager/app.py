@@ -27,7 +27,13 @@ from dronemanager.widgets import InputWithHistory, TextualLogHandler, DroneOverv
 import logging
 
 
-pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s - %(message)s', datefmt="%H:%M:%S")
+class LastNameElementFilter(logging.Filter):
+    def filter(self, record):
+        record.name_last = record.name.rsplit('.', 1)[-1]
+        return True
+
+
+pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name_last)s - %(message)s', datefmt="%H:%M:%S")
 
 
 UPDATE_RATE = 20  # How often the various screens update in Hz.
@@ -157,6 +163,8 @@ class CommandScreen(Screen):
         self._kill_counter = 0  # Require kill all to be entered twice
         self.logger = self.app.logger
         self.log_pane_handlers = {}
+
+        self.textual_log_handler = None
 
         # Parser stuff
         self._exit_aliases = ["quit", "close", "q"]
@@ -518,12 +526,9 @@ class CommandScreen(Screen):
         pass
 
     async def _add_drone_object(self, name, drone):
-        output = self.query_one("#output", expect_type=Log)
         status_field = self.query_one("#status", expect_type=VerticalScroll)
         self.logger.debug(f"Adding log pane handlers to {name}")
-        drone_handler = TextualLogHandler(output)
-        drone_handler.setLevel(logging.INFO)
-        drone_handler.setFormatter(pane_formatter)
+        drone_handler = self.textual_log_handler
         drone.add_handler(drone_handler)
         self.logger.debug(f"Adding overview widget for {name}")
         drone_status_widget = DroneOverview(drone, UPDATE_RATE, self.logger)
@@ -587,14 +592,21 @@ class CommandScreen(Screen):
                 await asyncio.sleep(0.1)
         handler = TextualLogHandler(output)
         handler.setLevel(logging.INFO)
+        handler.addFilter(LastNameElementFilter())
         handler.setFormatter(pane_formatter)
+        self.textual_log_handler = handler
         self.logger.addHandler(handler)
-        self.dm.logger.addHandler(handler)
+        self.app.logging_handlers.append(handler)
 
     def _on_mount(self, event: events.Mount) -> None:
         super()._on_mount(event)
         self.query_one("#output", expect_type=Log).can_focus = False
+        self.set_interval(1 / UPDATE_RATE, self._drain_textual_logs)
         self.dm.start()
+
+    def _drain_textual_logs(self):
+        if self.textual_log_handler is not None:
+            self.textual_log_handler.drain(100)
 
     def compose(self):
         """ Creates the screen object
@@ -639,9 +651,10 @@ class DroneApp(App):
     An app mode is essentially a different view, we can cycle between them. See the textual documentation for more 
     information."""
 
-    def __init__(self, dm: DroneManager, logger=None, smoke_test = False):
+    def __init__(self, dm: DroneManager, logger=None, smoke_test=False):
         self.dm = dm
         self.smoke_test = smoke_test
+        self.logging_handlers = []
         if logger is None:
             self.logger = logging.getLogger("App")
             self.logger.setLevel(logging.DEBUG)
@@ -652,20 +665,46 @@ class DroneApp(App):
             file_handler = logging.FileHandler(os.path.join(logdir, filename))
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.append(file_handler)
             self.logger.addHandler(file_handler)
         else:
             self.logger = logger
-        self.command_screen: CommandScreen | None = None
-        self.status_screen: StatusScreen | None = None
+
+        self.running_tasks: set[asyncio.Task] = set()
+        self._awaiter_tasks = set()
+
         super().__init__()
 
     def on_mount(self):
         self.switch_mode("control")
         if self.smoke_test:
-            self.set_timer(30, self._smoke_test_end)
+            self.set_timer(10, self._smoke_test_end)
 
     def _smoke_test_end(self):
-        asyncio.create_task(self.screen.exit())
+        self.exit()
+
+    async def on_unmount(self):
+        self._remove_handlers()
+        await self._close()
+
+    def _remove_handlers(self):
+        for handler in self.logging_handlers:
+            self.logger.removeHandler(handler)
+            handler.close()
+
+    async def _close(self):
+        for task in self.running_tasks:
+            if isinstance(task, asyncio.Task):
+                task.cancel()
+        for task in self._awaiter_tasks:
+            if isinstance(task, asyncio.Task):
+                task.cancel()
+        await asyncio.sleep(0.2)  # Beauty pause
+        self.logger.info("Exiting...")
+        await self.dm.close()
+        await asyncio.sleep(1)  # Beauty pause
+        for handler in self.logger.handlers:
+            self.logger.removeHandler(handler)
 
     def action_cycle_control(self):
         self.logger.debug("Switching between control and status screens")
