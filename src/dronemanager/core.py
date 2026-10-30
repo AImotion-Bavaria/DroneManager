@@ -242,6 +242,7 @@ class DroneManager:
 
         # Add connection and check for drone
         old_drone_idents = [str(drone.drone_identifier) for drone in (await self.comm_protocols[comm_protocol].discovered_drones()).copy()]
+        self.logger.debug(f"Old Drones: {old_drone_idents}")
         start_time = time.time()
         await self.add_conn(comm_protocol=comm_protocol, conn_string=conn)
         self.logger.info(f"Added connection {conn} using {comm_protocol}")
@@ -254,7 +255,7 @@ class DroneManager:
             for new_drone in new_drones:
                 new_drone_ident = str(new_drone.drone_identifier)
                 if new_drone_ident not in old_drone_idents:
-                    self.logger.debug("Discovered drone, checking match...")
+                    self.logger.debug(f"Discovered drone {new_drone_ident}, checking match...")
                     # If provided name was not in config, ignore drone_identifier and use any new drone.
                     if not specific_config:
                         drone_config.drone_identifier = new_drone_ident
@@ -267,7 +268,8 @@ class DroneManager:
                             drone_added = True
                             break
             # Last IDs are now the old IDs, to prevent issues if other drones were disconnected or connected while we were waiting.
-            old_drone_idents = [drone.drone_identifier for drone in new_drones]
+            old_drone_idents = [str(drone.drone_identifier) for drone in new_drones]
+            self.logger.debug(f"Old Drones: {old_drone_idents}")
         if not drone_added:
             self.logger.warning(f"Connection attempt to {name} using {comm_protocol} at {conn} timed out!")
 
