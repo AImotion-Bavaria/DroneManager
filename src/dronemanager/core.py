@@ -216,6 +216,7 @@ class DroneManager:
                     self.logger.debug(repr(e), exc_info=True)
                     await self.disconnect(drone_name, force=True)
                     return False
+            self.logger.info(f"Successfully added {drone_name}!")
             return True
 
     async def connect_drone(self, name: str, comm_protocol: str | None = None, conn: str | None = None,
@@ -251,7 +252,7 @@ class DroneManager:
             new_drones = await self.comm_protocols[comm_protocol].discovered_drones()
             for new_drone in new_drones:
                 if str(new_drone.drone_identifier) not in old_drone_idents:
-                    # If provided name was not in config, ignore drone_identifier
+                    # If provided name was not in config, ignore drone_identifier and use any new drone.
                     if not specific_config:
                         await self.add_drone(comm_protocol, name, new_drone.drone_identifier, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
                         drone_added = True
@@ -261,6 +262,8 @@ class DroneManager:
                             await self.add_drone(comm_protocol, name, new_drone.drone_identifier, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
                             drone_added = True
                             break
+            # Last IDs are now the old IDs, to prevent issues if other drones were disconnected or connected while we were waiting.
+            old_drone_idents = [drone.drone_identifier for drone in new_drones]
         if not drone_added:
             self.logger.warning(f"Connection attempt to {name} using {comm_protocol} at {conn} timed out!")
 

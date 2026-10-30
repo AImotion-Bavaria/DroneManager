@@ -174,15 +174,14 @@ class MAVSDKDrone(Drone):
         self.system: System = system
         self.fc_component_id: int = -1  # Actual component ids are always positive, so this is a safe "invalid" number.
 
-        # Temporary attributes for new mavsdk version
-        self._mavdirect = MavlinkDirectAsync(self.system)
-        self._mavparam = ParamAsync(self.system)
-        self._mavtelem = TelemetryAsync(self.system)
-        self._mavaction = ActionAsync(self.system)
-        self._mavoffboard = OffboardAsync(self.system)
-        self._mavmanual = ManualControlAsync(self.system)
-        self._mavcamera = CameraAsync(self.system)
-        self._mavgimbal = GimbalAsync(self.system)
+        self._mavdirect: MavlinkDirectAsync = None
+        self._mavparam: ParamAsync = None
+        self._mavtelem: TelemetryAsync = None
+        self._mavaction: ActionAsync = None
+        self._mavoffboard: OffboardAsync = None
+        self._mavmanual: ManualControlAsync = None
+        self._mavcamera: CameraAsync = None
+        self._mavgimbal: GimbalAsync = None
 
         self._is_connected: bool = False
         self._is_armed: bool = False
@@ -207,6 +206,18 @@ class MAVSDKDrone(Drone):
 
     def initialize(self, name, config: DroneConfig):
         super().initialize(name, config)
+
+        # Init all the mav plugins
+        # Do this here so that we can destroy them when shutdown happens and avoid issues with mavsdk shutdown.
+        self._mavdirect = MavlinkDirectAsync(self.system)
+        self._mavparam = ParamAsync(self.system)
+        self._mavtelem = TelemetryAsync(self.system)
+        self._mavaction = ActionAsync(self.system)
+        self._mavoffboard = OffboardAsync(self.system)
+        self._mavmanual = ManualControlAsync(self.system)
+        self._mavcamera = CameraAsync(self.system)
+        self._mavgimbal = GimbalAsync(self.system)
+
         # Init path generator
         try:
             # self.path_generator = GMP3Generator(self, 1/self.position_update_rate, self.logger)
@@ -470,8 +481,19 @@ class MAVSDKDrone(Drone):
                 if self.path_follower.is_active:
                     await self.path_follower.deactivate()
                 self.path_follower.close()
-            # Cleanup other stuff that doesn't reliably get cleaned up otherwise
+
+            # Cancel tasks here, to prevent them from trying to use destroyed mav plugins.
             await super().shutdown(force=force)
+
+            self._mavdirect.destroy()
+            self._mavparam.destroy()
+            self._mavtelem.destroy()
+            self._mavaction.destroy()
+            self._mavoffboard.destroy()
+            self._mavmanual.destroy()
+            self._mavcamera.destroy()
+            self._mavgimbal.destroy()
+
             self.initialized = False
         else:
             self.logger.warning("Can't disconnect from an armed drone!")
