@@ -96,7 +96,7 @@ class MAVSDKComm(DroneComProtocol):
     async def add_drone(self, drone_name: str, system_id: str, config: DroneConfig):
         drone = self.systems[int(system_id)]
         if drone.initialized:
-            self.logger.warning(f"Couldn't add drone {drone_name} for ID {system_id} as a drone with that ID already"
+            self.logger.warning(f"Couldn't add drone {drone_name} for ID {system_id} as a drone with that ID already "
                                 f"exists: {drone.name}!")
             return None
         drone.initialize(drone_name, config=config)

@@ -47,6 +47,8 @@ found, assigning it the name ``tom``. You can provide any name, it will be used 
    drones at once, to prevent confusion about which name refers to which physical drone.
 
 After a short moment, you should see text pop in on the status pane showing information for our newly connected drone.
+There may be an error about callbacks being dropped as the drone is being added. This is not unexpected due to the
+volume of messages and not concerning as long as it resolves once parameters are loaded.
 
 To arm the drone, type::
 

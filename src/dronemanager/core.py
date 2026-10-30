@@ -241,25 +241,29 @@ class DroneManager:
             conn = drone_config.connection
 
         # Add connection and check for drone
-        old_drone_idents = [drone.drone_identifier for drone in (await self.comm_protocols[comm_protocol].discovered_drones()).copy()]
+        old_drone_idents = [str(drone.drone_identifier) for drone in (await self.comm_protocols[comm_protocol].discovered_drones()).copy()]
         start_time = time.time()
         await self.add_conn(comm_protocol=comm_protocol, conn_string=conn)
         self.logger.info(f"Added connection {conn} using {comm_protocol}")
         # Check every half second or so if there is a new drone
         drone_added = False
         while time.time() - start_time < timeout and not drone_added:
+            self.logger.debug("Waiting to discover drone...")
             await asyncio.sleep(0.5)
             new_drones = await self.comm_protocols[comm_protocol].discovered_drones()
             for new_drone in new_drones:
-                if str(new_drone.drone_identifier) not in old_drone_idents:
+                new_drone_ident = str(new_drone.drone_identifier)
+                if new_drone_ident not in old_drone_idents:
+                    self.logger.debug("Discovered drone, checking match...")
                     # If provided name was not in config, ignore drone_identifier and use any new drone.
                     if not specific_config:
-                        await self.add_drone(comm_protocol, name, new_drone.drone_identifier, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
+                        drone_config.drone_identifier = new_drone_ident
+                        await self.add_drone(comm_protocol, name, new_drone_ident, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
                         drone_added = True
                         break
                     else:
-                        if str(new_drone.drone_identifier) == drone_config.drone_identifier:
-                            await self.add_drone(comm_protocol, name, new_drone.drone_identifier, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
+                        if new_drone_ident == drone_config.drone_identifier:
+                            await self.add_drone(comm_protocol, name, new_drone_ident, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
                             drone_added = True
                             break
             # Last IDs are now the old IDs, to prevent issues if other drones were disconnected or connected while we were waiting.
