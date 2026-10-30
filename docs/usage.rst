@@ -29,12 +29,13 @@ In one terminal, activate the venv and start up DroneManager by typing ``dm``.
 In a separate terminal, start up a PX4 SITL drone by moving to the PX4 SITL root directory and typing
 ``make px4-sitl gz_x500``.
 
-To connect to the simulated drone with DroneManager, click on the command line at the bottom and type::
+To connect to the simulated drone with DroneManager, click on the command line at the bottom, or switch with tab,
+and type::
 
    connect tom
 
-This creates a new drone object, assigns it the name ``tom`` and tries to connect to a MAVLink Node with the given
-connection string. You can provide any name, it will be used to identify the drone in other commands.
+This creates a new connection using the default values from the configuration file and tries to add the first drone
+found, assigning it the name ``tom``. You can provide any name, it will be used to identify the drone in other commands.
 
 .. note::
    Typing any command with ``--help`` or ``-h`` prints a help string for that command.
@@ -42,7 +43,8 @@ connection string. You can provide any name, it will be used to identify the dro
 .. note::
    As a convenience feature, we provide a config file in which drone names and their connection string as well as other
    parameters may be saved. When entered with a name from this config file, the connect function will use the parameters
-   from the file unless overridden in the command line.
+   from the file unless overridden in the command line. We strongly recommend using this feature when using multiple
+   drones at once, to prevent confusion about which name refers to which physical drone.
 
 After a short moment, you should see text pop in on the status pane showing information for our newly connected drone.
 
@@ -130,6 +132,50 @@ In the next section, we take a look at an example mission with multiple drones.
 
 See :ref:`the mission guide <guide_mission>` for more information on setting up your own.
 
+Connecting drones
+-----------------
+
+The ``connect`` command used in the previous section is actually a convenience feature combining multiple otherwise
+independent steps. It might not work well without extra configuration when connecting multiple drones, or trying to
+connect to a specific drone within a group.
+The first step is adding a connection for a given communication/command protocol, for example::
+
+    add-conn <protocol> <conn-string>
+
+Any drones at this connection are then added to a list as they are discovered. That list can be shown with::
+
+    list
+
+which lists each discovered potential drone, what communication protocol they use and an identifier which depends on the
+communication protocol and should be unique for that drone, for example::
+
+    Protocol: mav, Identifier: 1, is connected: True, not initialized.
+
+The identifier is only used by the communication protocol. For MAVLink it is the system IDs of the drones.
+Drones which are not initialized are discovered but have not been added to DroneManager and messages for them are
+generally not processed. They can then be added to DroneManager with::
+
+    add-drone <protocol> <identifier> <name>
+
+This command starts up logging, telemetry processing and assorted other processes for the drone, and assigns it a name.
+These names must be unique and are used to refer to the drone by the rest of the software.
+
+The behaviour of the ``connect`` command depends on the configuration file and the other arguments passed. If called
+with a name which is not this file, it will try to use the default communication protocol (also set in the file,
+MAVLink by default), and a default connection (determined by the "default" drone entry, "udp://:14540" by default) and
+then add the first drone discovered. The command line arguments can be used to override any of these default values.
+
+If called with a name which is in the file, it will use the communication protocol and connection string for that entry,
+and will only add the drone if its identifier matches that in the config. Other drones discovered will not be added
+automatically. The command line arguments can again be used to override the config entry.
+
+Disconnecting drones happens through the drones themselves::
+
+    disconnect <name>
+
+This removes the drone from DroneManager, stops assorted processing and frees the name.
+
+
 Script usage
 ------------
 
@@ -143,6 +189,7 @@ instance, connect to a drone and perform some basic maneuvers::
     async def main():
         drone_type = DroneMAVSDK
         dm = DroneManager(drone_type, log_to_console=True)
+        await dm.start()
         await dm.connect_to_drone("tom")
         await asyncio.sleep(1)  # Small grace period to allow parameters to load
         await dm.arm("tom")
@@ -244,11 +291,14 @@ Configuration file
 
 To prevent having to reenter commands constantly, a number of DroneManagers aspects can be adjusted permanently with the
 ``config.json`` file. To view the location of the configuration file, either enter "config" in the CLI or check the
-value of the CONFIG_FILE attribute in utils.
+value of the CONFIG_FILE attribute in utils. By default, this is a directory created in the users "Documents" folder.
+Log files are kept nearby as well.
 
 The config file has three main components. The first are parameters for DroneManager itself, such as the
 MAVLink system ID, or the plugins that are automatically loaded on startup. Second is a list of plugin settings.
 This entry lists each plugin and a series of parameters which are passed to the plugin when it is initialized.
+You can define settings for plugins which are not loaded by default.
+
 The final component is a list of drones and parameters for them::
 
     {
@@ -274,8 +324,10 @@ These parameters are used when a matching name is used during connection. Instea
 ``connect tom udp://IP:port -f 30 -l False`` everytime you want to use this drone, you can adjust the parameters in the
 config file and they will be loaded automatically with just ``connect tom``. If you supply an argument in the command
 line, it is used instead of the config file. The file is left unchanged by this.
-The speed, acceleration and jerk limits are used for autonomous navigation functions by default.
+The speed, acceleration and jerk limits are only used for our own autonomous navigation functions.
+
 There is one special drone entry, which is called "default". These parameters are used when no matching name is found.
+Feel free to adjust the values of this entry, but it should not be renamed.
 
 
 Common Issues
@@ -285,10 +337,10 @@ Fundamentally, our software works by sending commands to the flight controller (
 drone), which then executes those commands. We've set up and tested our software to work with default PX4 and Ardupilot
 configurations out-of-the-box, but if the flight controller doesn't respond as our software expects it too,
 there isn't much we can do.
-For example, depending on configuration of the flight controller, the "home" position might be the take-off position,
-or it might be the coordinate origin point, usually set at boot-up for the local coordinate system. Imagine booting up
-a drone on a desk, then carrying it to the take-off point, then setting up your laptop and notes on the same desk. When
-you tell the drone to return-to-base, it might very well try to land on your laptop.
+For example, depending on the configuration of the flight controller, the "home" position might be the take-off
+position, or it might be the coordinate origin point, usually set at boot-up for the local coordinate system. Imagine
+booting up a drone on a desk, then carrying it to the take-off point, then setting up your laptop and notes on the same
+desk. When you tell the drone to return-to-base, it might very well try to land on your laptop.
 When working with real drones you should always test the actual behaviour in a safe environment before risking hardware
 (or lives!).
 
@@ -313,7 +365,7 @@ maintains the ports.
 In principle, multiple drones can connect on the same port if their system IDs are different. In practice however, a
 lot of MAVLink software and SDKs do not actually support this, and information from and commands to the different
 drones gets mangled. If you want to use multiple drones at once, we highly recommend setting each drone to communicate
-on a different port.
+on a different port, in addition to setting different system IDs.
 
 Coordinate Systems
 ^^^^^^^^^^^^^^^^^^

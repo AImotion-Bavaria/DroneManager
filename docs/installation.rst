@@ -22,6 +22,10 @@ can take a few moments, and then you should have a blank instance of DroneManage
 .. image:: imgs/tool-blank.png
 
 
+Configuration and log files are placed in a folder in the users Documents directory by default. The default config
+file is copied over form the repository. If an update changes the config structure, you should rename your old config,
+boot up DM and then migrate any changes you had made over to the newly created config.
+
 Simulated Drones
 ----------------
 

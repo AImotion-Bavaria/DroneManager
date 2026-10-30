@@ -164,7 +164,7 @@ class GimbalPlugin(Plugin):
 
 class Gimbal:
 
-    def __init__(self, logger, dm, drone: dronemanager.drone.DroneMAVSDK, gimbal_id: int = 2, device_id: int = 154):
+    def __init__(self, logger, dm, drone: dronemanager.drone.Drone, gimbal_id: int = 2, device_id: int = 154):
         self.logger = logger
         self.dm = dm
         self.drone = drone

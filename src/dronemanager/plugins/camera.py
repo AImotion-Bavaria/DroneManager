@@ -256,7 +256,7 @@ class Camera:
         self._running_tasks.add(asyncio.create_task(coroutine_awaiter(capture_info_task, self.logger)))
 
     @property
-    def drone(self) -> dronemanager.drone.DroneMAVSDK:
+    def drone(self) -> dronemanager.drone.Drone:
         return self.dm.drones[self.drone_name]
 
     async def _capture_info_updates(self):

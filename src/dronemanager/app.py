@@ -9,7 +9,6 @@ import types
 import typing
 
 import dronemanager
-from dronemanager.comm_protocols.mav import MAVSDKDrone
 from dronemanager.core import DroneManager
 from dronemanager.drone import Drone
 from dronemanager.utils import COMMON_FORMATTER, coroutine_awaiter, LOG_DIR, CONFIG_FILE
@@ -207,18 +206,18 @@ class CommandScreen(Screen):
                                             "so this can lead to performance issues with many drones due to disk write "
                                             "limits. Overwrites the equivalent entry in a configuration entry.")
 
-
         connect_parser = command_parsers.add_parser("connect", help="Connect a drone", logger=self.logger)
         connect_parser.add_argument("drone", type=str, help="Name for the drone.")
-        connect_parser.add_argument("drone_address", type=str, nargs='?',
-                                    help="Connection string. Something like udp://:14540")
-        connect_parser.add_argument("-f", "--frequency", type=float, default=None, help="Telemetry frequency in Hz.")
+        connect_parser.add_argument("connection", type=str, nargs='?',
+                                    help="Connection string. Depends on the communication protocol, something like udp://:14540. Default set in configuration file.")
+        connect_parser.add_argument("-cp", "--comm-protocol", type=str, default=None, help="The communication protocol to use. Default set in configuration file.")
+        connect_parser.add_argument("-f", "--frequency", type=float, default=None, help="Telemetry frequency in Hz. Default set in configuration file.")
         connect_parser.add_argument("-t", "--timeout", type=float, default=30, required=False,
-                                    help="Timeout in seconds for connection attempts. Default 120s.")
+                                    help="Timeout in seconds for connection attempts. Default 30s.")
         connect_parser.add_argument("-l", "--log", type=str, choices=["True", "False"], required=False, default=None,
-                                    help="If set to True, log telemetry messages. Our log format is currently bad "
-                                         "so this can lead to performance issues with many drones due to disk write "
-                                         "limits. Overwrites the equivalent entry in a configuration entry.")
+                                    help="Whether to log telemetry messages. If provided, overrides the value from the "
+                                         "configuration file. Our log format is currently bad so this can lead to "
+                                         "performance issues with many drones due to disk write limits.")
 
         disconnect_parser = command_parsers.add_parser("disconnect", help="Disconnect one or more drones.", logger=self.logger)
         disconnect_parser.add_argument("drones", type=str, nargs="+", help="Which drones to disconnect.")
@@ -378,7 +377,7 @@ class CommandScreen(Screen):
                         comm_drones = await self.dm.comm_protocols[comm_protocol].discovered_drones()
                         for drone in comm_drones:
                             initialized_string = f"is initialized as {drone.name}" if drone.initialized else "not initialized."
-                            potential_drones.append(f"Protocol: {comm_protocol}, identifier: {drone.drone_identifier}, is connected: {drone.is_connected}, {initialized_string}")
+                            potential_drones.append(f"Protocol: {comm_protocol}, Identifier: {drone.drone_identifier}, Is connected: {drone.is_connected}, {initialized_string}")
                     potential_drone_str = "\n".join(potential_drones)
                     self.logger.info(f"Loaded comm protocols: {list(self.dm.comm_protocols.keys())}")
                     self.logger.info(f"Potential drones:\n{potential_drone_str}")
@@ -389,23 +388,9 @@ class CommandScreen(Screen):
 
 
                 elif command == "connect":
-                    address = args.drone_address
-                    if args.drone in self.dm.drone_configs and not address:
-                        address = self.dm.drone_configs[args.drone].address
-                    elif not address:
-                        address = self.dm.drone_configs["default"].address
-
-                    log_messages = None
-                    if args.log is not None:
-                        if args.log == "True":
-                            log_messages = True
-                        else:
-                            log_messages = False
-                    # TODO: This whole thing for new conn procedure, use dm convenience function.
-                    # TODO: Adjust documentation
-                    tmp = asyncio.create_task(self.dm.connect_to_drone(args.drone, drone_class=MAVSDKDrone, drone_address=address, timeout=args.timeout,
-                                                                       telemetry_frequency=args.frequency,
-                                                                       log_telemetry=log_messages))
+                    # TODO: Look into camera and gimbal plugins so they no longer use mavlink directly.
+                    tmp = asyncio.create_task(self.dm.connect_drone(args.drone, comm_protocol=args.comm_protocol, conn=args.connection, timeout=args.timeout,
+                                                                       telemetry_frequency=args.frequency,log_telemetry=args.log))
                 elif command == "params":
                     if args.drone not in self.dm.drones:
                         self.logger.warning(f"No drone named {args.drone}")

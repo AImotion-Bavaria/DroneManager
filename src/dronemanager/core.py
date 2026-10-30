@@ -219,30 +219,50 @@ class DroneManager:
             return True
 
     async def connect_drone(self, name: str, comm_protocol: str | None = None, conn: str | None = None,
-                            timeout: float = 5, telemetry_frequency: float | None = None,
+                            timeout: float = 30, telemetry_frequency: float | None = None,
                             log_telemetry: bool | None = None):
-        # Add connection, wait for a new drone to appear and add it under the given name.
-        # TODO: This and test it
-        # TODO: If the name is in the config, we should only add the drone if identifiers also match, and also use comm_protocol from config.
         # All the config stuff
         drone_config = copy.deepcopy(self.drone_configs["default"])
         specific_config: DroneConfig = self.drone_configs[name]
         if specific_config:
-            self.logger.debug("Found drone config, using parameters...")
+            self.logger.debug("Found drone config, using configuration...")
             for key, value in specific_config.__dict__.items():
                 setattr(drone_config, key, value)
+        # If a protocol is supplied, prefer that, otherwise use the one from the config (including default)
+        if comm_protocol is not None:
+            drone_config.protocol = comm_protocol
+        else:
+            comm_protocol = drone_config.protocol
+        # If a connection is supplied, prefer that, otherwise use the one from config (including default)
+        if conn is not None:
+            drone_config.connection = conn
+        else:
+            conn = drone_config.connection
 
-        old_drone_idents = [drone.drone_identifier for drone in await self.comm_protocols[comm_protocol].discovered_drones()]
+        # Add connection and check for drone
+        old_drone_idents = [drone.drone_identifier for drone in (await self.comm_protocols[comm_protocol].discovered_drones()).copy()]
         start_time = time.time()
         await self.add_conn(comm_protocol=comm_protocol, conn_string=conn)
+        self.logger.info(f"Added connection {conn} using {comm_protocol}")
         # Check every half second or so if there is a new drone
-        while time.time() - start_time < timeout:
+        drone_added = False
+        while time.time() - start_time < timeout and not drone_added:
             await asyncio.sleep(0.5)
             new_drones = await self.comm_protocols[comm_protocol].discovered_drones()
-            if len(new_drones) > len(old_drone_idents):
-                for new_drone in new_drones:
-                    if new_drone.drone_identifier not in old_drone_idents:
-                        await self.add_drone(comm_protocol, name, new_drone.drone_identifier, drone_config=drone_config)
+            for new_drone in new_drones:
+                if str(new_drone.drone_identifier) not in old_drone_idents:
+                    # If provided name was not in config, ignore drone_identifier
+                    if not specific_config:
+                        await self.add_drone(comm_protocol, name, new_drone.drone_identifier, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
+                        drone_added = True
+                        break
+                    else:
+                        if str(new_drone.drone_identifier) == drone_config.drone_identifier:
+                            await self.add_drone(comm_protocol, name, new_drone.drone_identifier, drone_config=drone_config, telemetry_frequency=telemetry_frequency, log_telemetry=log_telemetry)
+                            drone_added = True
+                            break
+        if not drone_added:
+            self.logger.warning(f"Connection attempt to {name} using {comm_protocol} at {conn} timed out!")
 
     async def disconnect(self, names: str | Collection[str], force=False):
         # Remove drone(s) from dronemanager.

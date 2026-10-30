@@ -69,7 +69,7 @@ class MAVSDKComm(DroneComProtocol):
         if mavsdk_conn_string in self.conn_handles:
             self.logger.debug(f"Connection {mavsdk_conn_string} already exists")
             return None
-        self.logger.debug(f"Adding connection {mavsdk_conn_string}")
+        self.logger.info(f"Adding connection {mavsdk_conn_string}")
         conn_handle = None
         try:
             conn_handle = await self.mavsdk.add_any_connection(mavsdk_conn_string)

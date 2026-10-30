@@ -10,7 +10,7 @@ Developer Guide
 Conceptually, the DroneManager software is split into three large components.
 
 The first handles core connection and command functions for a single drone. This component contains the
-:py:mod:`Drone <dronemanager.drone>`module, as well as the navigation functions.
+:py:mod:`Drone <dronemanager.drone>`module, the individual communication protocols as well as the navigation functions.
 
 The second expands this for multiple drones and makes them available to plugins. This component handles the bulk of
 the logic. The main class is :py:class:`DroneManager <dronemanager.core.DroneManager>`, but it also contains
