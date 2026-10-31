@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import inspect
 import json
@@ -32,140 +34,10 @@ from dronemanager.utils import relative_gps, coroutine_awaiter
 from dronemanager.utils import parse_address
 
 
-class MAVGimbal(Gimbal):
-    def __init__(self, logger, dm, drone: Drone, gimbal_id: int = 2, device_id: int = 154):
-        self.logger = logger
-        self.dm = dm
-        self.drone = drone
-
-        self.gimbal_id = gimbal_id
-        self.device_id = device_id  # mavlink component id of the gimbal
-
-        self.gimbal_id_commands = self.gimbal_id  # Alternative that always works: 0
-        self.roll: float = math.nan
-        self.pitch: float = math.nan
-        self.yaw: float = math.nan
-        self.roll_absolute: float = math.nan
-        self.pitch_absolute: float = math.nan
-        self.yaw_absolute: float = math.nan
-        self.mode: YawMode = YawMode.YAW_FOLLOW
-        self.primary_control: tuple[float, float] = (math.nan, math.nan)
-        self.secondary_control: tuple[float, float] = (math.nan, math.nan)
-        self._running_tasks = set()
-        self.update_rate = 5  # How often we request updates on control and attitude TODO: Implement
-        self.start()
-
-    @classmethod
-    async def get_gimbals(cls, drone: "MAVSDKDrone"):
-        # TODO: All of this.
-            drone_obj = self.dm.drones[drone]
-            async for gmbl_list in drone_obj._mavgimbal.subscribe_gimbal_list():
-                gimbals = gmbl_list.gimbals
-                gimbal_objs = []
-                for gimbalitem in gimbals:
-                    gimbal_objs.append(Gimbal(drone_obj.logger, self.dm, drone_obj, gimbal_id=gimbalitem.gimbal_id,
-                                              device_id=gimbalitem.gimbal_device_id))
-                self.gimbals[drone] = gimbal_objs
-            return False
-
-    def start(self):
-        self._running_tasks.add(asyncio.create_task(self.take_control()))
-        self._running_tasks.add(asyncio.create_task(self._gimbal_att_checker()))
-        self._running_tasks.add(asyncio.create_task(self._gimbal_control_checker()))
-
-    async def close(self):
-        try:
-            await self.release_control()
-        except Exception as e:
-            self.logger.warning("Exception while closing gimbal object, check logs")
-            self.logger.debug(repr(e), exc_info=True)
-        for task in self._running_tasks:
-            if isinstance(task, asyncio.Task):
-                task.cancel()
-
-    @property
-    def in_control(self):
-        return self.primary_control[0] == self.dm.system_id and self.primary_control[1] == self.dm.component_id
-
-    async def _gimbal_att_checker(self):
-        async for attitude in self.drone._mavgimbal.subscribe_attitude():
-            if attitude.gimbal_id == self.gimbal_id:
-                self.roll = attitude.euler_angle_forward.roll_deg
-                self.pitch = attitude.euler_angle_forward.pitch_deg
-                self.yaw = attitude.euler_angle_forward.yaw_deg
-                self.roll_absolute = attitude.euler_angle_north.roll_deg
-                self.pitch_absolute = attitude.euler_angle_north.pitch_deg
-                self.yaw_absolute = attitude.euler_angle_north.yaw_deg
-
-    async def _gimbal_control_checker(self):
-        async for ctrl in self.drone._mavgimbal.subscribe_control_status():
-            if ctrl.gimbal_id == self.gimbal_id:
-                self.primary_control = (ctrl.sysid_primary_control, ctrl.compid_primary_control)
-                self.secondary_control = (ctrl.sysid_secondary_control, ctrl.compid_secondary_control)
-
-    def log_status(self):
-        self.logger.info(f"Gimbal control: {'Yes' if self.in_control else 'No'}, P:{self.primary_control}, "
-                         f"S: {self.secondary_control}, "
-                         f"Roll: {self.roll}, Pitch: {self.pitch}, Yaw: {self.yaw}, "
-                         f"AbsRoll: {self.roll_absolute}, AbsPitch: {self.pitch_absolute}, AbsYaw: {self.yaw_absolute}")
-
-    async def take_control(self):
-        gimbal_id = self.gimbal_id_commands
-        return await self._error_wrapper(self.drone._mavgimbal.take_control, gimbal_id, ControlMode.PRIMARY)
-
-    async def release_control(self):
-        gimbal_id = self.gimbal_id_commands
-        return await self._error_wrapper(self.drone._mavgimbal.release_control, gimbal_id)
-
-    async def point_gimbal_at(self, lat, long, amsl):
-        gimbal_id = self.gimbal_id_commands
-        res = await self._error_wrapper(self.drone._mavgimbal.set_roi_location, gimbal_id, lat, long, amsl)
-        if res:
-            self.logger.info("Gimbal accepted ROI command!")
-        else:
-            self.logger.info("Gimbal didn't accept ROI command!")
-        return res
-
-    async def point_gimbal_at_relative(self, x, y, z):
-        lat, long, amsl = relative_gps(self.drone.position_global, [x, y, z])
-        return await self.point_gimbal_at(lat, long, amsl)
-
-    async def set_gimbal_angles(self, pitch, yaw):
-        gimbal_id = self.gimbal_id_commands
-        self.logger.info(f"Setting gimbal angles for gimbal {gimbal_id} to {pitch, yaw}")
-        return await self._error_wrapper(self.drone._mavgimbal.set_angles, gimbal_id, 0, pitch, yaw, self.mode,
-                                         SendMode.ONCE)
-
-    async def set_gimbal_rates(self, pitch_rate, yaw_rate):
-        gimbal_id = self.gimbal_id_commands
-        return await self._error_wrapper(self.drone._mavgimbal.set_angular_rates, gimbal_id, 0, pitch_rate, yaw_rate,
-                                         self.mode, SendMode.ONCE)
-
-    async def set_gimbal_mode(self, mode):
-        assert mode in ["follow", "lock"]
-        if mode == "follow":
-            self.mode = YawMode.YAW_FOLLOW
-            return True
-        elif mode == "lock":
-            self.mode = YawMode.YAW_LOCK
-            return True
-        else:
-            return False
-
-    async def _error_wrapper(self, func, *args, **kwargs):
-        try:
-            await func(*args, **kwargs)
-        except GimbalError as e:
-            self.logger.error(f"GimbalError: {e._result.result_str}")
-            return False
-        return True
-
-
 class MAVSDKComm(DroneComProtocol):
 
     NAME: str = "mav"
-
-    SUPPORTS: dict[str, type] = {"gimbal": MAVGimbal}
+    SUPPORTS: dict[str, type] = {}
 
     def __init__(self, logger, system_id: int, component_id: int):
         super().__init__(logger)
@@ -287,7 +159,7 @@ class MAVSDKComm(DroneComProtocol):
             self.mavsdk.destroy()
 
 
-class MAVSDKDrone(Drone):
+class MAVSDKDrone(Drone[MAVSDKComm]):
 
     VALID_FLIGHTMODES = {"hold", "offboard", "return", "land", "takeoff", "position", "altitude"}
     # This attribute is for checking which flight modes can be changed into manually
@@ -304,14 +176,14 @@ class MAVSDKDrone(Drone):
         self.system: System = system
         self.fc_component_id: int = -1  # Actual component ids are always positive, so this is a safe "invalid" number.
 
-        self._mavdirect: MavlinkDirectAsync = None
-        self._mavparam: ParamAsync = None
-        self._mavtelem: TelemetryAsync = None
-        self._mavaction: ActionAsync = None
-        self._mavoffboard: OffboardAsync = None
-        self._mavmanual: ManualControlAsync = None
-        self._mavcamera: CameraAsync = None
-        self._mavgimbal: GimbalAsync = None
+        self.mavdirect: MavlinkDirectAsync
+        self.mavparam: ParamAsync
+        self.mavtelem: TelemetryAsync
+        self.mavaction: ActionAsync
+        self.mavoffboard: OffboardAsync
+        self.mavmanual: ManualControlAsync
+        self.mavcamera: CameraAsync
+        self.mavgimbal: GimbalAsync
 
         self._is_connected: bool = False
         self._is_armed: bool = False
@@ -339,14 +211,14 @@ class MAVSDKDrone(Drone):
 
         # Init all the mav plugins
         # Do this here so that we can destroy them when shutdown happens and avoid issues with mavsdk shutdown.
-        self._mavdirect = MavlinkDirectAsync(self.system)
-        self._mavparam = ParamAsync(self.system)
-        self._mavtelem = TelemetryAsync(self.system)
-        self._mavaction = ActionAsync(self.system)
-        self._mavoffboard = OffboardAsync(self.system)
-        self._mavmanual = ManualControlAsync(self.system)
-        self._mavcamera = CameraAsync(self.system)
-        self._mavgimbal = GimbalAsync(self.system)
+        self.mavdirect = MavlinkDirectAsync(self.system)
+        self.mavparam = ParamAsync(self.system)
+        self.mavtelem = TelemetryAsync(self.system)
+        self.mavaction = ActionAsync(self.system)
+        self.mavoffboard = OffboardAsync(self.system)
+        self.mavmanual = ManualControlAsync(self.system)
+        self.mavcamera = CameraAsync(self.system)
+        self.mavgimbal = GimbalAsync(self.system)
 
         # Init path generator
         try:
@@ -452,7 +324,7 @@ class MAVSDKDrone(Drone):
 
     async def send_message(self, msg: MavlinkMessage):
         try:
-            return await self._mavdirect.send_message(msg)
+            return await self.mavdirect.send_message(msg)
         except Exception as e:
             self.logger.warning("Exception sending mavlink message!")
             self.logger.debug(repr(e), exc_info=True)
@@ -504,7 +376,7 @@ class MAVSDKDrone(Drone):
 
     async def _process_messages(self):
         try:
-            async for message in self._mavdirect.subscribe_message(""):
+            async for message in self.mavdirect.subscribe_message(""):
                 if self.config.log_telemetry:
                     self.telem_logger.debug(f"Received {message.message_name} from {message.system_id, message.component_id} to {message.target_system_id, message.target_component_id}: {message.fields_json}")
                 # Check that the message is for us
@@ -563,7 +435,7 @@ class MAVSDKDrone(Drone):
         self.logger.info(f"Loading parameters...")
         try:
             #await self._mavparam.select_component(1, ProtocolVersion.V1)
-            parameters = await self._mavparam.get_all_params()
+            parameters = await self.mavparam.get_all_params()
             raw_params = {}
             for param in parameters.int_params:
                 raw_params[param.name] = (param.value, int)
@@ -615,14 +487,14 @@ class MAVSDKDrone(Drone):
             # Cancel tasks here, to prevent them from trying to use destroyed mav plugins.
             await super().shutdown(force=force)
 
-            self._mavdirect.destroy()
-            self._mavparam.destroy()
-            self._mavtelem.destroy()
-            self._mavaction.destroy()
-            self._mavoffboard.destroy()
-            self._mavmanual.destroy()
-            self._mavcamera.destroy()
-            self._mavgimbal.destroy()
+            self.mavdirect.destroy()
+            self.mavparam.destroy()
+            self.mavtelem.destroy()
+            self.mavaction.destroy()
+            self.mavoffboard.destroy()
+            self.mavmanual.destroy()
+            self.mavcamera.destroy()
+            self.mavgimbal.destroy()
 
             self.initialized = False
         else:
@@ -643,12 +515,12 @@ class MAVSDKDrone(Drone):
     async def _configure_message_rates(self) -> None:
         if self.is_connected:
             try:
-                await self._mavtelem.set_rate_position(self.position_update_rate)
-                await self._mavtelem.set_rate_position_velocity_ned(self.position_update_rate)
-                await self._mavtelem.set_rate_attitude_euler(self.position_update_rate)
-                await self._mavtelem.set_rate_altitude(self.position_update_rate)
-                await self._mavtelem.set_rate_battery(self.position_update_rate)
-                await self._mavtelem.set_rate_gps_info(self.position_update_rate)
+                await self.mavtelem.set_rate_position(self.position_update_rate)
+                await self.mavtelem.set_rate_position_velocity_ned(self.position_update_rate)
+                await self.mavtelem.set_rate_attitude_euler(self.position_update_rate)
+                await self.mavtelem.set_rate_altitude(self.position_update_rate)
+                await self.mavtelem.set_rate_battery(self.position_update_rate)
+                await self.mavtelem.set_rate_gps_info(self.position_update_rate)
             except Exception as e:
                 self.logger.warning(f"Couldn't set message rate!")
                 self.logger.debug(f"{repr(e)}", exc_info=True)
@@ -667,30 +539,30 @@ class MAVSDKDrone(Drone):
             self._is_connected = connected
 
     async def _arm_check(self):
-        async for arm in self._mavtelem.subscribe_armed():
+        async for arm in self.mavtelem.subscribe_armed():
             self._is_armed = arm
 
     async def _flightmode_check(self):
-        async for flightmode in self._mavtelem.subscribe_flight_mode():
+        async for flightmode in self.mavtelem.subscribe_flight_mode():
             self._flightmode = flightmode
 
     async def _inair_check(self):
-        async for in_air in self._mavtelem.subscribe_in_air():
+        async for in_air in self.mavtelem.subscribe_in_air():
             self._in_air = in_air
 
     async def _gps_check(self):
-        async for gps in self._mavtelem.subscribe_gps_info():
+        async for gps in self.mavtelem.subscribe_gps_info():
             self._gps_info = gps.fix_type
 
     async def _g_pos_check(self):
-        async for pos in self._mavtelem.subscribe_position():
+        async for pos in self.mavtelem.subscribe_position():
             self._position_g[0] = pos.latitude_deg
             self._position_g[1] = pos.longitude_deg
             self._position_g[2] = pos.absolute_altitude_m
             self._position_g[3] = pos.relative_altitude_m
 
     async def _vel_rpos_check(self):
-        async for pos_vel in self._mavtelem.subscribe_position_velocity_ned():
+        async for pos_vel in self.mavtelem.subscribe_position_velocity_ned():
             self._velocity[0] = pos_vel.velocity.north_m_s
             self._velocity[1] = pos_vel.velocity.east_m_s
             self._velocity[2] = pos_vel.velocity.down_m_s
@@ -699,17 +571,17 @@ class MAVSDKDrone(Drone):
             self._position_ned[2] = pos_vel.position.down_m
 
     async def _att_check(self):
-        async for att in self._mavtelem.subscribe_attitude_euler():
+        async for att in self.mavtelem.subscribe_attitude_euler():
             self._attitude[0] = att.roll_deg
             self._attitude[1] = att.pitch_deg
             self._attitude[2] = att.yaw_deg
 
     async def _heading_check(self):
-        async for heading in self._mavtelem.subscribe_heading():
+        async for heading in self.mavtelem.subscribe_heading():
             self._heading = heading.heading_deg
 
     async def _battery_check(self):
-        async for battery in self._mavtelem.subscribe_battery():
+        async for battery in self.mavtelem.subscribe_battery():
             battery_id = battery.id
             if battery_id in self._batteries:
                 own_battery = self._batteries[battery_id]
@@ -723,7 +595,7 @@ class MAVSDKDrone(Drone):
             own_battery.temperature = battery.temperature_degc
 
     async def _status_check(self):
-        async for message in self._mavtelem.subscribe_status_text():
+        async for message in self.mavtelem.subscribe_status_text():
             if message.type is StatusTextType.DEBUG:
                 self.logger.debug(f"{message.text}")
             elif message.type in [StatusTextType.INFO, StatusTextType.NOTICE]:
@@ -737,7 +609,7 @@ class MAVSDKDrone(Drone):
         timeout = 5
         self.logger.info("Arming!")
         await super().arm()
-        result = await self._error_wrapper(self._mavaction.arm, ActionError)
+        result = await self._error_wrapper(self.mavaction.arm, ActionError)
         if result and not isinstance(result, Exception):
             start_time = time.time()
             while not self.is_armed:
@@ -756,7 +628,7 @@ class MAVSDKDrone(Drone):
         if self.path_follower is not None and self.path_follower.is_active:
             await self.path_follower.deactivate()
         await super().disarm()
-        result = await self._error_wrapper(self._mavaction.disarm, ActionError)
+        result = await self._error_wrapper(self.mavaction.disarm, ActionError)
         if result and not isinstance(result, Exception):
             start_time = time.time()
             while self.is_armed:
@@ -805,7 +677,7 @@ class MAVSDKDrone(Drone):
         self.logger.info("Trying to take off...")
         await super().takeoff(altitude=altitude)
         self._can_takeoff()
-        result = await self._error_wrapper(self._mavaction.takeoff, ActionError)
+        result = await self._error_wrapper(self.mavaction.takeoff, ActionError)
         if isinstance(result, Exception):
             self.logger.warning("Takeoff denied!")
         while self.flightmode is not FlightMode.TAKEOFF:
@@ -843,26 +715,26 @@ class MAVSDKDrone(Drone):
         await super().change_flight_mode(flightmode)
         start_time = time.time()
         if flightmode == "hold":
-            result = await self._error_wrapper(self._mavaction.hold, ActionError)
+            result = await self._error_wrapper(self.mavaction.hold, ActionError)
             target_flight_mode = FlightMode.HOLD
         elif flightmode == "offboard":
-            result = await self._error_wrapper(self._mavoffboard.start, OffboardError)
+            result = await self._error_wrapper(self.mavoffboard.start, OffboardError)
             target_flight_mode = FlightMode.OFFBOARD
         elif flightmode == "return":
-            result = await self._error_wrapper(self._mavaction.return_to_launch, ActionError)
+            result = await self._error_wrapper(self.mavaction.return_to_launch, ActionError)
             target_flight_mode = FlightMode.RETURN_TO_LAUNCH
         elif flightmode == "land":
-            result = await self._error_wrapper(self._mavaction.land, ActionError)
+            result = await self._error_wrapper(self.mavaction.land, ActionError)
             target_flight_mode = FlightMode.LAND
         elif flightmode == "takeoff":
             self._can_takeoff()
-            result = await self._error_wrapper(self._mavaction.takeoff, ActionError)
+            result = await self._error_wrapper(self.mavaction.takeoff, ActionError)
             target_flight_mode = FlightMode.TAKEOFF
         elif flightmode == "position":
-            result = await self._error_wrapper(self._mavmanual.start_position_control, ManualControlError)
+            result = await self._error_wrapper(self.mavmanual.start_position_control, ManualControlError)
             target_flight_mode = FlightMode.POSCTL
         elif flightmode == "altitude":
-            result = await self._error_wrapper(self._mavmanual.start_altitude_control, ManualControlError)
+            result = await self._error_wrapper(self.mavmanual.start_altitude_control, ManualControlError)
             target_flight_mode = FlightMode.ALTCTL
         else:
             raise KeyError(f"{flightmode} is not a valid flightmode!")
@@ -887,34 +759,34 @@ class MAVSDKDrone(Drone):
         setpoint_type = setpoint.type
         if setpoint_type == WayPointType.POS_NED:
             point_ned_yaw = PositionNedYaw(*setpoint.pos, setpoint.yaw)
-            return await self._error_wrapper(self._mavoffboard.set_position_ned, OffboardError, point_ned_yaw)
+            return await self._error_wrapper(self.mavoffboard.set_position_ned, OffboardError, point_ned_yaw)
         elif setpoint_type == WayPointType.POS_VEL_NED:
             point_ned_yaw = PositionNedYaw(*setpoint.pos, setpoint.yaw)
             velocity_ned_yaw = VelocityNedYaw(*setpoint.vel, setpoint.yaw)
-            return await self._error_wrapper(self._mavoffboard.set_position_velocity_ned, OffboardError,
+            return await self._error_wrapper(self.mavoffboard.set_position_velocity_ned, OffboardError,
                                              point_ned_yaw, velocity_ned_yaw)
         elif setpoint_type == WayPointType.POS_VEL_ACC_NED:
             yaw = setpoint.yaw
             point_ned_yaw = PositionNedYaw(*setpoint.pos, yaw)
             velocity_ned_yaw = VelocityNedYaw(*setpoint.vel, yaw)
             acc_ned = AccelerationNed(*setpoint.acc)
-            return await self._error_wrapper(self._mavoffboard.set_position_velocity_acceleration_ned,
+            return await self._error_wrapper(self.mavoffboard.set_position_velocity_acceleration_ned,
                                              OffboardError,
                                              point_ned_yaw,
                                              velocity_ned_yaw,
                                              acc_ned)
         elif setpoint_type == WayPointType.VEL_NED:
             vel_yaw = VelocityNedYaw(*setpoint.vel, setpoint.yaw)
-            return await self._error_wrapper(self._mavoffboard.set_velocity_ned, OffboardError, vel_yaw)
+            return await self._error_wrapper(self.mavoffboard.set_velocity_ned, OffboardError, vel_yaw)
         elif setpoint_type == WayPointType.VEL_BODY:
             vel_yawrate = VelocityBodyYawspeed(*setpoint.vel, setpoint.yaw_rate)
-            return await self._error_wrapper(self._mavoffboard.set_velocity_body, OffboardError, vel_yawrate)
+            return await self._error_wrapper(self.mavoffboard.set_velocity_body, OffboardError, vel_yawrate)
         elif setpoint_type == WayPointType.POS_GLOBAL:
             latitude, longitude, amsl = setpoint.gps
             alt_type = PositionGlobalYaw.AltitudeType.AMSL
             position = PositionGlobalYaw(lat_deg=latitude, lon_deg=longitude, alt_m=amsl,
                                          yaw_deg=setpoint.yaw, altitude_type=alt_type)
-            return await self._error_wrapper(self._mavoffboard.set_position_global, OffboardError, position)
+            return await self._error_wrapper(self.mavoffboard.set_position_global, OffboardError, position)
         else:
             raise RuntimeError("Invalid SetPointType!")
 
@@ -1123,7 +995,7 @@ class MAVSDKDrone(Drone):
             gps = relative_gps(self.position_global, offset)
 
         # Send goto command
-        await self._mavaction.goto_location(*gps, yaw)
+        await self.mavaction.goto_location(*gps, yaw)
 
         while True:
             # Check if we have arrived at target waypoint
@@ -1142,7 +1014,7 @@ class MAVSDKDrone(Drone):
         if not self.is_armed or not self.in_air:
             raise RuntimeError("Can't fly a landed or unarmed drone!")
         yaw_behaviour = OrbitYawBehavior.HOLD_FRONT_TO_CIRCLE_CENTER
-        await self._error_wrapper(self._mavaction.do_orbit, ActionError, radius, velocity, yaw_behaviour,
+        await self._error_wrapper(self.mavaction.do_orbit, ActionError, radius, velocity, yaw_behaviour,
                                   center_lat, center_long, amsl)
 
     async def land(self):
@@ -1164,7 +1036,7 @@ class MAVSDKDrone(Drone):
             await self.change_flight_mode("offboard")
         update_freq = 2
         try:
-            await self._mavtelem.set_rate_position_velocity_ned(self.position_update_rate)
+            await self.mavtelem.set_rate_position_velocity_ned(self.position_update_rate)
             update_freq = self.position_update_rate
         except Exception as e:
             self.logger.debug(f"Couldn't set message rate: {repr(e)}", exc_info=True)
@@ -1181,7 +1053,7 @@ class MAVSDKDrone(Drone):
         return True
 
     async def _land_using_landmode(self):
-        result = await self._error_wrapper(self._mavaction.land, ActionError)
+        result = await self._error_wrapper(self.mavaction.land, ActionError)
         if isinstance(result, Exception):
             self.logger.warning("Couldn't go into land mode")
         while self.flightmode is not FlightMode.LAND:
@@ -1197,18 +1069,18 @@ class MAVSDKDrone(Drone):
         self.clear_queue()
         self.cancel_action()
         await self.path_follower.deactivate()
-        result = await self._error_wrapper(self._mavmanual.start_position_control, ManualControlError)
+        result = await self._error_wrapper(self.mavmanual.start_position_control, ManualControlError)
         return result
 
     async def manual_control_altitude(self):
         self.clear_queue()
         self.cancel_action()
         await self.path_follower.deactivate()
-        result = await self._error_wrapper(self._mavmanual.start_altitude_control, ManualControlError)
+        result = await self._error_wrapper(self.mavmanual.start_altitude_control, ManualControlError)
         return result
 
     async def set_manual_control_input(self, x, y, z, r):
-        result = await self._error_wrapper(self._mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
+        result = await self._error_wrapper(self.mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
         return result
 
     async def stop(self):
@@ -1223,7 +1095,7 @@ class MAVSDKDrone(Drone):
         return True
 
     async def kill(self):
-        await self._error_wrapper(self._mavaction.kill, ActionError)
+        await self._error_wrapper(self.mavaction.kill, ActionError)
         await super().kill()
         return True
 
@@ -1234,3 +1106,122 @@ class MAVSDKDrone(Drone):
             self.logger.error(f"MAV{error_type.__name__} error: {e.result.name}")
             return False
         return True
+
+
+class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
+    def __init__(self, drone: MAVSDKDrone, gimbal_identifier: str):
+        super().__init__(drone, gimbal_identifier)
+        # Test this out with our gimbal after discovery.
+        # self.gimbal_id / self.device_id ??? Use component ID for mav com or mavsdk gimbal plugin?
+
+        #self.gimbal_id_commands = self.gimbal_id  # Alternative that always works: 0
+
+        self.update_rate = drone.position_update_rate
+
+    @classmethod
+    async def get_gimbals(cls, drone: MAVSDKDrone):
+        gimbal_list = await drone.mavgimbal.gimbal_list()
+        gimbals = gimbal_list.gimbals
+        gimbal_objs = []
+            #for gimbalitem in gimbals:
+            #    gimbal_objs.append(Gimbal(drone_obj.logger, self.dm, drone_obj, gimbal_id=gimbalitem.gimbal_id,
+            #                              device_id=gimbalitem.gimbal_device_id))
+            #self.gimbals[drone] = gimbal_objs
+        #return False
+
+    # TODO: Everything below this.
+
+    def start(self):
+        self._running_tasks.add(asyncio.create_task(self.take_control()))
+        self._running_tasks.add(asyncio.create_task(self._gimbal_att_checker()))
+        self._running_tasks.add(asyncio.create_task(self._gimbal_control_checker()))
+
+    async def close(self):
+        try:
+            await self.release_control()
+        except Exception as e:
+            self.logger.warning("Exception while closing gimbal object, check logs")
+            self.logger.debug(repr(e), exc_info=True)
+        for task in self._running_tasks:
+            if isinstance(task, asyncio.Task):
+                task.cancel()
+
+    @property
+    def in_control(self):
+        return self.primary_control[0] == self.dm.system_id and self.primary_control[1] == self.dm.component_id
+
+    async def _gimbal_att_checker(self):
+        async for attitude in self.drone._mavgimbal.subscribe_attitude():
+            if attitude.gimbal_id == self.gimbal_id:
+                self.roll = attitude.euler_angle_forward.roll_deg
+                self.pitch = attitude.euler_angle_forward.pitch_deg
+                self.yaw = attitude.euler_angle_forward.yaw_deg
+                self.roll_absolute = attitude.euler_angle_north.roll_deg
+                self.pitch_absolute = attitude.euler_angle_north.pitch_deg
+                self.yaw_absolute = attitude.euler_angle_north.yaw_deg
+
+    async def _gimbal_control_checker(self):
+        async for ctrl in self.drone._mavgimbal.subscribe_control_status():
+            if ctrl.gimbal_id == self.gimbal_id:
+                self.primary_control = (ctrl.sysid_primary_control, ctrl.compid_primary_control)
+                self.secondary_control = (ctrl.sysid_secondary_control, ctrl.compid_secondary_control)
+
+    def log_status(self):
+        self.logger.info(f"Gimbal control: {'Yes' if self.in_control else 'No'}, P:{self.primary_control}, "
+                         f"S: {self.secondary_control}, "
+                         f"Roll: {self.roll}, Pitch: {self.pitch}, Yaw: {self.yaw}, "
+                         f"AbsRoll: {self.roll_absolute}, AbsPitch: {self.pitch_absolute}, AbsYaw: {self.yaw_absolute}")
+
+    async def take_control(self):
+        gimbal_id = self.gimbal_id_commands
+        return await self._error_wrapper(self.drone._mavgimbal.take_control, gimbal_id, ControlMode.PRIMARY)
+
+    async def release_control(self):
+        gimbal_id = self.gimbal_id_commands
+        return await self._error_wrapper(self.drone._mavgimbal.release_control, gimbal_id)
+
+    async def point_gimbal_at(self, lat, long, amsl):
+        gimbal_id = self.gimbal_id_commands
+        res = await self._error_wrapper(self.drone._mavgimbal.set_roi_location, gimbal_id, lat, long, amsl)
+        if res:
+            self.logger.info("Gimbal accepted ROI command!")
+        else:
+            self.logger.info("Gimbal didn't accept ROI command!")
+        return res
+
+    async def point_gimbal_at_relative(self, x, y, z):
+        lat, long, amsl = relative_gps(self.drone.position_global, [x, y, z])
+        return await self.point_gimbal_at(lat, long, amsl)
+
+    async def set_gimbal_angles(self, pitch, yaw):
+        gimbal_id = self.gimbal_id_commands
+        self.logger.info(f"Setting gimbal angles for gimbal {gimbal_id} to {pitch, yaw}")
+        return await self._error_wrapper(self.drone._mavgimbal.set_angles, gimbal_id, 0, pitch, yaw, self.mode,
+                                         SendMode.ONCE)
+
+    async def set_gimbal_rates(self, pitch_rate, yaw_rate):
+        gimbal_id = self.gimbal_id_commands
+        return await self._error_wrapper(self.drone._mavgimbal.set_angular_rates, gimbal_id, 0, pitch_rate, yaw_rate,
+                                         self.mode, SendMode.ONCE)
+
+    async def set_gimbal_mode(self, mode):
+        assert mode in ["follow", "lock"]
+        if mode == "follow":
+            self.mode = YawMode.YAW_FOLLOW
+            return True
+        elif mode == "lock":
+            self.mode = YawMode.YAW_LOCK
+            return True
+        else:
+            return False
+
+    async def _error_wrapper(self, func, *args, **kwargs):
+        try:
+            await func(*args, **kwargs)
+        except GimbalError as e:
+            self.logger.error(f"GimbalError: {e._result.result_str}")
+            return False
+        return True
+
+
+MAVSDKComm.SUPPORTS = {"gimbal": MAVSDKGimbal}

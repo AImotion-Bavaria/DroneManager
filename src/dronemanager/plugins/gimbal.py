@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 import asyncio
 import math
+from typing import Generic
 
-import dronemanager.drone
+from dronemanager.drone import DroneType
 from dronemanager.plugin import Plugin
 from dronemanager.utils import cancel_running_tasks
 
@@ -197,8 +198,8 @@ class GimbalPlugin(Plugin):
         return False
 
 
-class Gimbal(ABC):
-    def __init__(self, drone: dronemanager.drone.Drone, gimbal_identifier: str):
+class Gimbal(ABC, Generic[DroneType]):
+    def __init__(self, drone: DroneType, gimbal_identifier: str):
         self.logger = drone.logger.getChild(f"Gimbal-{gimbal_identifier}")
         self.drone = drone
         self.gimbal_identifier = gimbal_identifier
@@ -215,7 +216,7 @@ class Gimbal(ABC):
 
     @classmethod
     @abstractmethod
-    async def get_gimbals(cls, drone: dronemanager.drone.Drone) -> list[str]:
+    async def get_gimbals(cls, drone: DroneType) -> list[str]:
         """Method to discover any gimbals on this drone.
 
         Should return a list of gimbal identifiers.

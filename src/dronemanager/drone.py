@@ -5,7 +5,7 @@ import math
 import os.path
 from collections.abc import Callable
 from abc import ABC, abstractmethod
-from typing import Coroutine
+from typing import Coroutine, TypeVar, Generic
 
 import numpy as np
 
@@ -210,7 +210,10 @@ class DroneParams:
         self.max_yaw_rate = None  # degrees/s
 
 
-class Drone(ABC):
+CommType = TypeVar("CommType", bound=DroneComProtocol)
+
+
+class Drone(ABC, Generic[CommType]):
 
     # Drone discovery happens in two stages: First adding a connection to where we expect to discover drones.
     # Discovered drones then have a simple "basic" instantiation
@@ -221,9 +224,9 @@ class Drone(ABC):
     VALID_FLIGHTMODES = set()
     VALID_SETPOINT_TYPES = set()
 
-    def __init__(self, comm_protocol: DroneComProtocol, identifier, *args, **kwargs):
+    def __init__(self, comm_protocol: CommType, identifier, *args, **kwargs):
         self.name: str = ""
-        self.comm: DroneComProtocol = comm_protocol
+        self.comm: CommType = comm_protocol
         self.drone_identifier = identifier
         # Internal object which should be used to prevent multiple drone objects for the same physical drone.
         self.initialized = False
@@ -623,3 +626,6 @@ class Drone(ABC):
                 if task is not None:
                     task.cancel()
             self.current_action_tasks = set()
+
+
+DroneType = TypeVar("DroneType", bound=Drone)

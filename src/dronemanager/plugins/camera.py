@@ -260,7 +260,7 @@ class Camera:
         return self.dm.drones[self.drone_name]
 
     async def _capture_info_updates(self):
-        async for capture_info in self.dm.drones[self.drone_name]._mavcamera.subscribe_capture_info():
+        async for capture_info in self.dm.drones[self.drone_name].mavcamera.subscribe_capture_info():
             self.logger.info(f"Capture update: Camera {capture_info.component_id} "
                              f"{'succeeded' if capture_info.is_success else 'failed'} with photo at "
                              f"{capture_info.time_utc_us}: {capture_info.file_url}")
