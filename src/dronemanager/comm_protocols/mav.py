@@ -126,7 +126,7 @@ class MAVSDKComm(DroneComProtocol):
     async def add_system(self, system: System):
         sys_id = await system.get_system_id()
         self.logger.info(f"Discovered new system with ID {sys_id}.")
-        drone = MAVSDKDrone(self, system, system_id=sys_id)
+        drone = MAVSDKDrone(self, system, str(sys_id))
         self.systems[sys_id] = drone
 
     async def discovered_systems(self):
@@ -171,8 +171,9 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
     # What type of path setpoints this classes fly_<> commands can follow. This limits what Trajectory generators
     # can be used.
 
-    def __init__(self, comm_protocol: MAVSDKComm, system: System, system_id: int):
-        super().__init__(comm_protocol, system_id)
+    def __init__(self, comm_protocol: MAVSDKComm, system: System, drone_identifier: str):
+        super().__init__(comm_protocol, drone_identifier)
+        self.system_id = int(drone_identifier)
         self.system: System = system
         self.fc_component_id: int = -1  # Actual component ids are always positive, so this is a safe "invalid" number.
 
@@ -340,7 +341,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
 
     def _listen_ack(self, command_msg_id, target_component_id):
         fut = asyncio.Future()
-        msg_tuple = (command_msg_id, self.drone_identifier, target_component_id, self.comm.system_id, self.comm.component_id)
+        msg_tuple = (command_msg_id, self.system_id, target_component_id, self.comm.system_id, self.comm.component_id)
         if msg_tuple in self._ack_listeners:
             self._ack_listeners[msg_tuple].append(fut)
         else:
@@ -349,7 +350,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
 
     def send_command(self, command_msg_id, target_component_id, confirmation, param1=0, param2=0, param3=0, param4=0, param5=0, param6=0, param7=0):
         fields = {
-            "target_system": self.drone_identifier,
+            "target_system": self.system_id,
             "target_component": target_component_id,
             "command": command_msg_id,
             "confirmation": confirmation,
@@ -362,7 +363,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             "param7": param7,
         }
         self.logger.debug(f"Sending command {json.dumps(fields)}")
-        msg = MavlinkMessage("COMMAND_LONG", self.comm.system_id, self.comm.component_id, self.drone_identifier, target_component_id,
+        msg = MavlinkMessage("COMMAND_LONG", self.comm.system_id, self.comm.component_id, self.system_id, target_component_id,
                              fields_json=json.dumps(fields))
         send_task = asyncio.create_task(self.send_message(msg))
         self._running_tasks.add(send_task)
@@ -380,7 +381,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                 if self.config.log_telemetry:
                     self.telem_logger.debug(f"Received {message.message_name} from {message.system_id, message.component_id} to {message.target_system_id, message.target_component_id}: {message.fields_json}")
                 # Check that the message is for us
-                if (self.drone_identifier is None or message.system_id == self.drone_identifier) \
+                if (self.system_id is None or message.system_id == self.system_id) \
                         and (message.target_system_id == 0 or message.target_system_id == self.comm.system_id) \
                         and (message.target_component_id == 0 or message.target_component_id == self.comm.component_id):
                     # Do command acks
@@ -1111,8 +1112,10 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
 class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
     def __init__(self, drone: MAVSDKDrone, gimbal_identifier: str):
         super().__init__(drone, gimbal_identifier)
-        # Test this out with our gimbal after discovery.
-        # self.gimbal_id / self.device_id ??? Use component ID for mav com or mavsdk gimbal plugin?
+
+        self.gimbal_id, self.device_id, self.gimbal_manager_component_id = gimbal_identifier.split(".")
+
+
 
         #self.gimbal_id_commands = self.gimbal_id  # Alternative that always works: 0
 
@@ -1121,13 +1124,10 @@ class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
     @classmethod
     async def get_gimbals(cls, drone: MAVSDKDrone):
         gimbal_list = await drone.mavgimbal.gimbal_list()
-        gimbals = gimbal_list.gimbals
-        gimbal_objs = []
-            #for gimbalitem in gimbals:
-            #    gimbal_objs.append(Gimbal(drone_obj.logger, self.dm, drone_obj, gimbal_id=gimbalitem.gimbal_id,
-            #                              device_id=gimbalitem.gimbal_device_id))
-            #self.gimbals[drone] = gimbal_objs
-        #return False
+        gimbal_identifiers = []
+        for gimbalitem in gimbal_list.gimbals:
+            gimbal_identifiers.append(f"{gimbalitem.gimbal_id}.{gimbalitem.gimbal_device_id}.{gimbalitem.gimbal_manager_component_id}")
+        return gimbal_identifiers
 
     # TODO: Everything below this.
 
