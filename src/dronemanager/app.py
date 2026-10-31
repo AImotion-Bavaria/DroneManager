@@ -479,7 +479,7 @@ class CommandScreen(Screen):
                 self.running_tasks.add(tmp)
                 self._awaiter_tasks.add(asyncio.create_task(coroutine_awaiter(tmp, self.logger)))
         except Exception as e:
-            self.logger.error("Encountered an exception executing the CLI!")
+            self.logger.error(f"Encountered an exception executing the CLI! {repr(e)}")
             self.logger.debug(repr(e), exc_info=True)
 
     async def _load_plugin_commands(self, plugin_name, plugin):

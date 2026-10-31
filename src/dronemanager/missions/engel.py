@@ -343,7 +343,7 @@ class ENGELDataMission(Mission):
                 await self.gimbal.set_gimbal_mode("follow")
                 res = False
                 while not res:
-                    res = await self.gimbal.set_gimbal_angles(reference_image.gimbal_att[1], reference_image.gimbal_att[2])  # Set a non-zero to make sure gimbal responds
+                    res = await self.gimbal.set_gimbal_angles(reference_image.gimbal_att[2], reference_image.gimbal_att[1])  # Set a non-zero to make sure gimbal responds
                 # Wait for gimbal to have reached position.
                 while abs(self.gimbal.pitch - reference_image.gimbal_att[1]) > 1 or abs(self.gimbal.yaw - reference_image.gimbal_att[2]) > 1:
                     await asyncio.sleep(0.1)

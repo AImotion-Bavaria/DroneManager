@@ -27,6 +27,7 @@ import logging
 
 # TODO: Allow multiple fences
 
+# Reuse MAVSDK constants for now
 FlightMode = MAVSDKFlightMode
 FixType = MAVSDKFixType
 
@@ -45,10 +46,15 @@ class Battery:
 
 
 class DroneComProtocol(ABC):
+    """Abstract base class for drone communication protocols, such as MAVLink."""
 
     NAME = "YOUDIDSOMETHINGWRONG"
 
-    """ABC for drone communication protocols, such as MAVLink."""
+    SUPPORTS: dict[str, type] = {}
+    # A dictionary with strings about what kind of extra things, such as gimbals, this protocol supports. Plugins
+    # define what or how things should be listed here, for example the gimbal plugin checks for the presence of a
+    # "gimbal" entry. The value should be the class for this kind of thing and this com protocol.
+
     def __init__(self, logger, *args, **kwargs):
         self.logger = logger.getChild(self.__class__.__name__)
         self.running_tasks: set[asyncio.Task] = set()

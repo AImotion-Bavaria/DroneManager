@@ -291,8 +291,8 @@ async def coroutine_awaiter(task: asyncio.Future, logger: logging.Logger):
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        logger.error(f"Encountered an exception in a coroutine! See the log for more details")
-        logger.debug(e, exc_info=True)
+        logger.error(f"Encountered an exception in a coroutine: {repr(e)}! See the log for more details")
+        logger.debug(repr(e), exc_info=True)
 
 
 def cancel_running_tasks(running_tasks: MutableSet[asyncio.Future | Future]):
