@@ -328,7 +328,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         try:
             return await self.mavdirect.send_message(msg)
         except Exception as e:
-            self.logger.warning("Exception sending mavlink message!")
+            self.logger.warning(f"Exception sending mavlink message: {repr(e)}!")
             self.logger.debug(repr(e), exc_info=True)
 
     def listen_next_message(self, msg_name: str, target_component: int):
@@ -349,7 +349,9 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             self._ack_listeners[msg_tuple] = [fut]
         return fut
 
-    def send_command(self, command_msg_id, target_component_id, confirmation, param1=0, param2=0, param3=0, param4=0, param5=0, param6=0, param7=0):
+    def send_command(self, command_msg_id, target_component_id, confirmation, param1: int | float | None = 0,
+                     param2: int | float | None = 0, param3: int | float | None = 0, param4: int | float | None = 0,
+                     param5: int | float | None = 0, param6: int | float | None = 0, param7: int | float | None = 0):
         fields = {
             "target_system": self.system_id,
             "target_component": target_component_id,
@@ -1137,11 +1139,14 @@ class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
     @classmethod
     def prettify_identifier(cls, identifier) -> str:
         gimbal_id, device_id, component_manager_component_id = identifier.split(".")
-        return f"Gimbal ID: {gimbal_id}, device ID: {device_id}, component manager ID: {component_manager_component_id}"
+        return f"Gimbal with identifier: {identifier}: Gimbal ID {gimbal_id}, device ID {device_id}, component manager ID {component_manager_component_id}."
 
     async def start(self):
         self._running_tasks.add(asyncio.create_task(self._gimbal_att_checker()))
         self._running_tasks.add(asyncio.create_task(self._gimbal_control_checker()))
+        # Wait until we have attitude info before finishing
+        while math.isnan(self.pitch) or self.primary_control[0] < 0:
+            await asyncio.sleep(0.1)
 
     async def close(self):
         await super().close()
@@ -1170,12 +1175,12 @@ class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
                 self.primary_control = (ctrl.sysid_primary_control, ctrl.compid_primary_control)
                 self.secondary_control = (ctrl.sysid_secondary_control, ctrl.compid_secondary_control)
 
-    def log_status(self):
+    def log_status(self, logger):
         intro_str = f"{self.prettify_identifier(self.gimbal_identifier)}"
         ctrl_string = f"\tIn control: {'Yes' if self.in_control else 'No'}, primary: {self.primary_control}, secondary: {self.secondary_control}"
         att_str = f"\tYaw: {self.yaw}, Pitch: {self.pitch}, Roll: {self.roll}"
-        abs_att_str = f"\tAbsYaw: {self.roll_absolute}, AbsPitch: {self.pitch_absolute}, AbsRoll: {self.yaw_absolute}"
-        self.logger.info(f"Gimbal {self.gimbal_identifier} status:\n{intro_str}\n{ctrl_string}\n{att_str}\n{abs_att_str}")
+        abs_att_str = f"\tAbsYaw: {self.yaw_absolute}, AbsPitch: {self.pitch_absolute}, AbsRoll: {self.roll_absolute}"
+        logger.info(f"Gimbal {self.gimbal_identifier} status:\n{intro_str}\n{ctrl_string}\n{att_str}\n{abs_att_str}")
 
     async def take_control(self, timeout: float = 5) -> bool:
         if self.in_control:
@@ -1202,7 +1207,7 @@ class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
             return True
         self.logger.info(f"Releasing control of gimbal {self.gimbal_identifier}")
         start_time = time.time()
-        res = await self._error_wrapper(self.drone.mavgimbal.release_control, self.gimbal_id, ControlMode.PRIMARY)
+        res = await self._error_wrapper(self.drone.mavgimbal.release_control, self.gimbal_id)
         if not res:
             self.logger.info(f"Couldn't release control over gimbal {self.gimbal_identifier}!")
             return False
@@ -1292,12 +1297,11 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
             cam_identifiers.append(f"{cam_info.component_id}")
             extra_info.append(f"{cam_info.vendor_name}.{cam_info.model_name}")
         return cam_identifiers, extra_info
-        # TODO: Test. Alternative implementation is a callback based thing similar to init_cam_info
 
     @classmethod
     def prettify_identifier(cls, identifier, extra_info) -> str:
         vendor_name, model_name = extra_info.split(".")
-        return f"Camera with component ID {identifier}: {vendor_name}, {model_name}"
+        return f"Camera with identifier {identifier}: Component ID {identifier}, Vendor {vendor_name}, Model {model_name}"
 
     # TODO: Everything below this
 
@@ -1321,18 +1325,20 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
     async def load_camera_parameters(self):
         have_cam = await self.init_cam_info()
         if have_cam:
-            self.logger.info(f"Found camera {self.camera_id}")
             got_params = await self.get_cam_param_definition()
             if not got_params:
-                self.logger.info("Connected to a camera, but couldn't load the camera definition")
+                self.logger.warning("Connected to a camera, but couldn't load the camera definition")
+                return False
             else:
-                self.logger.info("Loaded camera parameter definition")
+                self.logger.info("Loaded camera parameter definition.")
             self._get_cam_params()
             return True
+        else:
+            self.logger.warning(f"Couldn't get basic information for camera {self.camera_identifier}")
         return False
 
     async def init_cam_info(self):
-        cam_info, request_ok = self.drone.request_message(259, "CAMERA_INFORMATION", self.camera_id)
+        cam_info, request_ok = self.drone.request_message(259, "CAMERA_INFORMATION", self.cam_component_id)
         request_ok = await request_ok
         cam_info = await cam_info
         if request_ok != 0:
@@ -1340,6 +1346,7 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
         if not cam_info:
             self.logger.warning("No camera found!")
         else:
+            self.logger.debug(f"Raw cam info: {cam_info.fields_json}")
             fields = json.loads(cam_info.fields_json, strict=False)
             self.vendor_name = bytearray(fields["vendor_name"]).rstrip(b"\x00").decode("ascii")
             self.model_name = bytearray(fields["model_name"]).rstrip(b"\x00").decode("ascii")
@@ -1353,29 +1360,29 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
     def params_loaded(self):
         return len(self.parameters) != 0
 
-    def log_status(self):
-        self.logger.info(f"Camera {self.camera_id}, parameters {'not ' if not self.params_loaded else ''}loaded")
+    def log_status(self, logger):
+        logger.info(f"Camera {self.camera_identifier}, parameters {'not ' if not self.params_loaded else ''}loaded")
 
     async def take_picture(self,):
-        res = await self.drone.send_command(2000, self.camera_id, 0, param3=1.0, param5=None)
+        res = await self.drone.send_command(2000, self.cam_component_id, 0, param3=1.0, param5=None)
         if not res:
             self.logger.warning("Couldn't take picture!")
         return res
 
     async def start_video(self):
-        res = await self.drone.send_command(2500, self.camera_id, 0, param2=1)
+        res = await self.drone.send_command(2500, self.cam_component_id, 0, param2=1)
         if not res:
             self.logger.warning("Couldn't start video!")
         return res
 
     async def stop_video(self):
-        res = await self.drone.send_command(2501, self.camera_id, 0)
+        res = await self.drone.send_command(2501, self.cam_component_id, 0)
         if not res:
             self.logger.warning("Couldn't stop video!")
         return res
 
     async def set_zoom(self, zoom):
-        res = await self.drone.send_command(203, self.camera_id, 0, param2=zoom, param5=0)
+        res = await self.drone.send_command(203, self.cam_component_id, 0, param2=zoom, param5=0)
         if not res:
             self.logger.warning("Couldn't set the zoom!")
         return res
@@ -1402,7 +1409,7 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
     async def _get_cam_definition(self, uri: str, version) -> str | None:
         xml_str = None
         try:
-            self.logger.info("Loading cam definition")
+            self.logger.info(f"Loading cam {self.camera_identifier} definition")
             cached_path = _xml_cache_filepath(uri, version)
             if cached_path.exists():
                 xml_str = await asyncio.get_running_loop().run_in_executor(None, self._load_xml, uri, version)
@@ -1498,13 +1505,12 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
 
     def _get_cam_params(self):
         self.logger.debug("Listening to camera parameters")
-        system_id, component_id = self.drone.gcs_ident
         fields = {
-            "target_system": self.drone.drone_identifier[0],
-            "target_component": self.camera_id,
+            "target_system": self.drone.system_id,
+            "target_component": self.cam_component_id,
         }
-        request_ext_params_msg = MavlinkMessage("PARAM_EXT_REQUEST_LIST", system_id, component_id,
-                                                self.drone.drone_identifier[0], self.camera_id, json.dumps(fields))
+        request_ext_params_msg = MavlinkMessage("PARAM_EXT_REQUEST_LIST", self.drone.comm.system_id, self.drone.comm.component_id,
+                                                self.drone.system_id, self.cam_component_id, json.dumps(fields))
         request_params_task = asyncio.create_task(self.drone.send_message(request_ext_params_msg))
         self._running_tasks.add(request_params_task)
         self._running_tasks.add(coroutine_awaiter(request_params_task, self.logger))
@@ -1514,16 +1520,15 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
         self._running_tasks.add(coroutine_awaiter(checker_task, self.logger))
 
     def _make_param_ext_request_read_msg(self, param_name = "", param_index = -1):
-        system_id, component_id = self.drone.gcs_ident
         fields = {
-            "target_system": self.drone.drone_identifier[0],
-            "target_component": self.camera_id,
+            "target_system": self.drone.system_id,
+            "target_component": self.cam_component_id,
             "param_id": param_name,
             "param_index": param_index,
         }
-        request_param_ext_read_msg = MavlinkMessage("PARAM_EXT_REQUEST_READ", system_id,
-                                                    component_id, self.drone.drone_identifier[0],
-                                                    self.camera_id, json.dumps(fields))
+        request_param_ext_read_msg = MavlinkMessage("PARAM_EXT_REQUEST_READ", self.drone.comm.system_id,
+                                                    self.drone.comm.component_id, self.drone.system_id,
+                                                    self.cam_component_id, json.dumps(fields))
         return request_param_ext_read_msg
 
     async def _param_receive_checker(self):
@@ -1537,43 +1542,43 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
 
     def _parse_param_update_values(self, fields):
         param_name = fields["param_id"]
-        param_type = fields["param_type"]
-        raw_param_value = fields["param_value"].encode("utf8")
+        param_type_id = fields["param_type"]
+        raw_param_value = fields["param_value"]  # Expect a list of ints representing bytes
         #param_name = msg.param_id
         #param_type = msg.param_type
         #raw_param_value = msg._param_value_raw
-        if param_type < 9:
-            length = 2 ** int(param_type / 2)
-        elif param_type == 9:
+        if param_type_id < 9:
+            length = 2 ** int(param_type_id / 2)
+        elif param_type_id == 9:
             length = 4
-        elif param_type == 10:
+        elif param_type_id == 10:
             length = 8
         else:
             raise NotImplementedError("Custom parameter types not supported!")
-        if param_type in [1, 3, 5, 7]:
+        if param_type_id in [1, 3, 5, 7]:
             parsed_param_value = int.from_bytes(raw_param_value[:length], byteorder="little", signed=False)
-        elif param_type in [2, 4, 6, 8]:
+        elif param_type_id in [2, 4, 6, 8]:
             parsed_param_value = int.from_bytes(raw_param_value[:length], byteorder="little", signed=True)
-        elif param_type == 9:
-            parsed_param_value = struct.unpack("<f", raw_param_value[:length])[0]
-        elif param_type == 10:
-            parsed_param_value = struct.unpack("<d", raw_param_value[:length])[0]
+        elif param_type_id == 9:
+            parsed_param_value = struct.unpack("<f", bytes(raw_param_value[:length]))[0]
+        elif param_type_id == 10:
+            parsed_param_value = struct.unpack("<d", bytes(raw_param_value[:length]))[0]
         else:
             self.logger.warning("Camera sending custom parameter type, not supported!")
             parsed_param_value = None
         self.logger.debug(f"Received parameter update message: "
-                          f"{param_name, parsed_param_value, raw_param_value[:length], param_type}")
+                          f"{param_name, parsed_param_value, raw_param_value[:length], param_type_id}.")
         return param_name, parsed_param_value
 
     def _update_param_value(self, param_name, param_value, param_type_id):
         if param_name in self.parameters:
             if param_value is not None:
-                self.logger.debug(f"Updating param {param_name} to {param_value}!")
+                self.logger.debug(f"Updating param {param_name} to {param_value}.")
                 self.parameters[param_name].value = param_value
             self.parameters[param_name].param_type_id = param_type_id
 
     def _listen_param_updates(self, message):
-        if message.component_id == self.camera_id and message.system_id == self.drone.drone_identifier[0]:
+        if message.component_id == self.cam_component_id and message.system_id == self.drone.system_id:
             fields = json.loads(message.fields_json, strict=False)
             param_name, param_value = self._parse_param_update_values(fields)
             self._update_param_value(param_name, param_value, fields["param_type"])
@@ -1604,12 +1609,12 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
             self.logger.info(f"Parameter {param_name}: {param_value}. {parameter.description}\n"
                              f"\tOptions: {info_string}")
 
-    def parse_param_value(self, param_name: str, param_value: str) -> bool | int | float | None:
+    def parse_parameter_value(self, param_name: str, param_value: str) -> int | float | None:
         parameter = self.parameters[param_name]
 
         if param_name not in self.parameters:
             self.logger.warning(f"Don't have a parameter {param_name}!")
-            return False
+            return None
 
         # Figure out what the input should be from param_type, is_option and is_bool
         if parameter.is_option:  # Treat it as a string option name, get value (as int) from the option object
@@ -1625,7 +1630,7 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
                 parsed_value = 0
             else:
                 parsed_value = None
-                self.logger.warning("Must be True or False!")
+                self.logger.warning("Boolean parameter values must be True or False!")
         else:  # Try to parse it into either a float or an int depending on param_type
             try:
                 if parameter.param_type_id is not None and parameter.param_type_id < 9:
@@ -1641,7 +1646,7 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
 
         return parsed_value
 
-    async def set_parameter(self, param_name: str, param_value: bool | int | float):
+    async def set_parameter(self, param_name: str, param_value: bool | int | float | str):
         # Send the change param message and request updates for any params in the updates list
 
         if param_name not in self.parameters:
@@ -1652,18 +1657,37 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
 
         self.logger.debug(f"Trying to set option {param_name}, {parameter.param_type_id} to {param_value}")
 
-        system_id, component_id = self.drone.gcs_ident
+        if isinstance(param_value, bool):
+            if param_value:
+                param_value = 1
+            else:
+                param_value = 0
+        elif isinstance(param_value, str):
+            param_value = self.parse_parameter_value(param_name, param_value)
+        elif isinstance(param_value, float):
+            if parameter.param_type_id == 9:
+                param_value = list(struct.pack("<f", param_value))
+            elif parameter.param_type_id == 10:
+                param_value = list(struct.pack("<d", param_value))
+            else:
+                self.logger.warning(f"Parameter {param_name} doesn't accept float values!")
+                return False
+
+        if param_value is None:
+            self.logger.warning(f"Couldn't parse value while trying to set parameter {param_name}")
+            return False
+
         fields = {
-            "target_system": self.drone.drone_identifier[0],
-            "target_component": self.camera_id,
+            "target_system": self.drone.system_id,
+            "target_component": self.cam_component_id,
             "param_id": param_name,
             "param_value": param_value,
             "param_type": parameter.param_type_id,
         }
-        param_ext_set_msg = MavlinkMessage("PARAM_EXT_SET", system_id, component_id,
-                                           self.drone.drone_identifier[0], self.camera_id, json.dumps(fields))
+        param_ext_set_msg = MavlinkMessage("PARAM_EXT_SET", self.drone.comm.system_id, self.drone.comm.component_id,
+                                           self.drone.system_id, self.cam_component_id, json.dumps(fields))
         await self.drone.send_message(param_ext_set_msg)
-        ack_msg = await self.drone.listen_next_message("PARAM_EXT_ACK", self.camera_id)
+        ack_msg = await self.drone.listen_next_message("PARAM_EXT_ACK", self.cam_component_id)
         ack_fields = json.loads(ack_msg.fields_json, strict=False)
         ack_res = ack_fields["param_result"]
         if ack_res == 1:
@@ -1700,9 +1724,7 @@ class MAVSDKCameraParameter(CameraParameter):
     def __init__(self, name, param_type, default, control: bool, description: str, updates: list[str],
                  options: list[ParameterOption], min_value: float | None, max_value: float | None,
                  step_size: float | None):
-        self.name = name  # Name of the parameter as str, params will be referred to with this
-        self.value: int | float = default  # Value of the parameter
-        self.param_type = param_type  # Mavlink parameter type, as in definition file
+        super().__init__(name, default, param_type=param_type)
         self.param_type_id = None  # Mavlink parameter type as used by extended parameter protocol
         self.default = default  # Default value
         self.control = control

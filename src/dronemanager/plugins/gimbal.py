@@ -76,6 +76,7 @@ class GimbalPlugin(Plugin):
             self.logger.info(f"No gimbals found for {drone}")
         out_str = "\n".join([gimbal_class.prettify_identifier(identifier) for identifier in gimbal_identifiers])
         self.logger.info(f"Discovered gimbals for drone {drone}:\n{out_str}")
+        return gimbal_identifiers
 
     async def add_gimbals(self, drone: str):
         """Add Gimbals from/for a given drone to the plugin"""
@@ -121,10 +122,11 @@ class GimbalPlugin(Plugin):
             return True
 
     async def status(self):
+        self.logger.info("Status for all connected gimbals:")
         for drone in self.gimbals:
             self.logger.info(f"Gimbals for drone {drone}:")
             for gimbal in self.gimbals[drone]:
-                gimbal.log_status()
+                gimbal.log_status(self.logger)
 
     async def take_control(self, drone: str, timeout: float = 5) -> bool:
         """Take control of gimbal(s) for this drone."""
@@ -180,7 +182,7 @@ class GimbalPlugin(Plugin):
 
 class Gimbal(ABC, Generic[DroneType]):
     def __init__(self, drone: DroneType, gimbal_identifier: str):
-        self.logger = drone.logger.getChild(f"Gimbal-{gimbal_identifier}")
+        self.logger = drone.logger
         self.drone = drone
         self.gimbal_identifier = gimbal_identifier
 
@@ -233,7 +235,7 @@ class Gimbal(ABC, Generic[DroneType]):
         raise NotImplementedError
 
     @abstractmethod
-    def log_status(self):
+    def log_status(self, logger):
         """Should write information about the gimbal status, such as position, mode, control, etc. to the logger."""
         raise NotImplementedError
 

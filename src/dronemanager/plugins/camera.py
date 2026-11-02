@@ -63,24 +63,27 @@ class CameraPlugin(Plugin):
             self.logger.info(f"No cameras found for {drone}")
         identifier_entries = []
         for i, identifier in enumerate(cam_identifiers):
-            identifier_entries.append(f"Camera with identifier {identifier}: {cam_class.prettify_identifier(identifier, extra_info[i])}")
+            identifier_entries.append(f"{cam_class.prettify_identifier(identifier, extra_info[i])}")
         out_str = "\n".join(identifier_entries)
         self.logger.info(f"Discovered cameras for drone {drone}:\n{out_str}")
+        return cam_identifiers
 
-    async def add_camera(self, drone: str, camera_identifier: str):
-        """Add a camera from/for a given drone to the plugin"""
-        self.logger.info(f"Adding camera to drone {drone}")
+    async def add_camera(self, drone: str, camera_identifier: str) -> Camera | None:
+        """Add a camera from/for a given drone to the plugin.
+
+        Returns the camera object if it was added successfully, None otherwise."""
+        self.logger.info(f"Adding camera to drone {drone}.")
         camera_identifiers, extra_info = await self._get_potential_camera_idents(drone)
         drone_obj = self.dm.drones[drone]
         camera_class: Type[Camera] = drone_obj.comm.SUPPORTS["camera"]
         if len(camera_identifiers) == 0:
             self.logger.info(f"No cameras found for {drone}")
-            return False
+            return None
         elif camera_identifier not in camera_identifiers:
             self.logger.info(f"Drone {drone} doesn't have a camera {camera_identifier}!")
-            return False
+            return None
         else:
-            self.logger.info(f"Adding camera {camera_identifier} to drone {drone}")
+            self.logger.info(f"Added camera {camera_identifier} to drone {drone}.")
             camera = None
             try:
                 camera = camera_class(drone_obj, camera_identifier)
@@ -95,9 +98,9 @@ class CameraPlugin(Plugin):
                 self.logger.debug(repr(e), exc_info=True)
                 if camera is not None:
                     await camera.close()
-                return False
+                return None
         await self.status()
-        return True
+        return camera
 
     async def remove_cameras(self, drone: str):
         """Remove a camera from a drone."""
@@ -113,10 +116,11 @@ class CameraPlugin(Plugin):
             return True
 
     async def status(self):
+        self.logger.info("Status for all connected cameras:")
         for drone in self.cameras:
             self.logger.info(f"Cameras for drone {drone}:")
             for camera in self.cameras[drone]:
-                camera.log_status()
+                camera.log_status(self.logger)
 
     async def parameters(self, drone: str, camera_identifier: str):
         if self.check_has_camera(drone):
@@ -180,7 +184,7 @@ class CameraPlugin(Plugin):
 class Camera(ABC, Generic[DroneType]):
 
     def __init__(self, drone: DroneType, camera_identifier: str):
-        self.logger = drone.logger.getChild(f"Camera-{camera_identifier}")
+        self.logger = drone.logger
         self.drone = drone
         self.camera_identifier = camera_identifier
         self.parameters: dict[str, CameraParameter] = {}
@@ -225,7 +229,7 @@ class Camera(ABC, Generic[DroneType]):
         """If the parameters and settings for this camera have been loaded."""
         return len(self.parameters) != 0
 
-    def log_status(self):
+    def log_status(self, logger):
         """Should write information about the camera state.
 
         For example, this could be any key settings, if it is capable of images or videos, etc.
