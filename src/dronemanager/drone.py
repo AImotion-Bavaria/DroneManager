@@ -76,11 +76,11 @@ class DroneComProtocol(ABC):
 
         The connection string can also be used as an identifier to remove the connection again.
 
-        Return values determine other behaviour by DroneManager in regard to this connection::
+        Return values determine other behaviour by DroneManager in regard to this connection:
 
-        - Successfully adding a connection should return ``True``.
-        - An already existing connection should return ``False``.
-        - A failed connection should raise an exception. This is used to inform the user, and so should contain
+        * Successfully adding a connection should return ``True``.
+        * An already existing connection should return ``False``.
+        * A failed connection should raise an exception. This is used to inform the user, and so should contain
           relevant information.
 
         """
