@@ -49,16 +49,16 @@ class CameraPlugin(Plugin):
 
     async def _get_potential_camera_idents(self, drone: str) -> tuple[list[str], list[str]]:
         drone_obj = self.dm.drones[drone]
-        if "camera" not in drone_obj.SUPPORTS:
+        if "camera" not in drone_obj.comm.SUPPORTS:
             self.logger.info(f"The communication protocol {drone_obj.comm} for {drone} does not support cameras!")
-        cam_class: Type[Camera] = drone_obj.SUPPORTS["camera"]
+        cam_class: Type[Camera] = drone_obj.comm.SUPPORTS["camera"]
         cam_identifiers = await cam_class.get_cameras(drone_obj)
         return cam_identifiers
 
     async def list_potential_cameras(self, drone: str):
         cam_identifiers, extra_info = await self._get_potential_camera_idents(drone)
         drone_obj = self.dm.drones[drone]
-        cam_class: Type[Camera] = drone_obj.SUPPORTS["camera"]
+        cam_class: Type[Camera] = drone_obj.comm.SUPPORTS["camera"]
         if len(cam_identifiers) == 0:
             self.logger.info(f"No cameras found for {drone}")
         identifier_entries = []
@@ -72,7 +72,7 @@ class CameraPlugin(Plugin):
         self.logger.info(f"Adding camera to drone {drone}")
         camera_identifiers, extra_info = await self._get_potential_camera_idents(drone)
         drone_obj = self.dm.drones[drone]
-        camera_class: Type[Camera] = drone_obj.SUPPORTS["camera"]
+        camera_class: Type[Camera] = drone_obj.comm.SUPPORTS["camera"]
         if len(camera_identifiers) == 0:
             self.logger.info(f"No cameras found for {drone}")
             return False
@@ -85,7 +85,10 @@ class CameraPlugin(Plugin):
             try:
                 camera = camera_class(drone_obj, camera_identifier)
                 await camera.start()
-                self.cameras[drone].append(camera)
+                if drone not in self.cameras:
+                    self.cameras[drone] = [camera]
+                else:
+                    self.cameras[drone].append(camera)
             except Exception as e:
                 self.logger.warning(f"Couldn't add camera {camera_identifier} to {drone} due to an exception: "
                                     f"{repr(e)}! See the log for more details.")

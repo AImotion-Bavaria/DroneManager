@@ -35,6 +35,7 @@ class GimbalPlugin(Plugin):
             "take": self.take_control,
             "release": self.release_control,
             "set": self.set_gimbal_angles,
+            "rate": self.set_gimbal_rate,
             "point": self.point_gimbal_at,
             "mode": self.set_gimbal_mode,
             "status": self.status,
@@ -61,16 +62,16 @@ class GimbalPlugin(Plugin):
 
     async def _get_potential_gimbal_idents(self, drone: str):
         drone_obj = self.dm.drones[drone]
-        if "gimbal" not in drone_obj.SUPPORTS:
+        if "gimbal" not in drone_obj.comm.SUPPORTS:
             self.logger.info(f"The communication protocol {drone_obj.comm} for {drone} does not support gimbals!")
-        gimbal_class: Type[Gimbal] = drone_obj.SUPPORTS["gimbal"]
+        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS["gimbal"]
         gimbal_identifiers = await gimbal_class.get_gimbals(drone_obj)
         return gimbal_identifiers
 
     async def list_potential_gimbals(self, drone: str):
         gimbal_identifiers = await self._get_potential_gimbal_idents(drone)
         drone_obj = self.dm.drones[drone]
-        gimbal_class: Type[Gimbal] = drone_obj.SUPPORTS["gimbal"]
+        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS["gimbal"]
         if len(gimbal_identifiers) == 0:
             self.logger.info(f"No gimbals found for {drone}")
         out_str = "\n".join([gimbal_class.prettify_identifier(identifier) for identifier in gimbal_identifiers])
@@ -80,7 +81,7 @@ class GimbalPlugin(Plugin):
         """Add Gimbals from/for a given drone to the plugin"""
         gimbal_identifiers = await self._get_potential_gimbal_idents(drone)
         drone_obj = self.dm.drones[drone]
-        gimbal_class: Type[Gimbal] = drone_obj.SUPPORTS["gimbal"]
+        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS["gimbal"]
         if len(gimbal_identifiers) == 0:
             self.logger.info(f"No gimbals found for {drone}")
             return False
@@ -92,7 +93,10 @@ class GimbalPlugin(Plugin):
                 try:
                     gimbal = gimbal_class(drone_obj, gimbal_identifier)
                     await gimbal.start()
-                    self.gimbals[drone].append(gimbal)
+                    if drone not in self.gimbals:
+                        self.gimbals[drone] = [gimbal]
+                    else:
+                        self.gimbals[drone].append(gimbal)
                 except Exception as e:
                     self.logger.warning(f"Couldn't add gimbal {gimbal_identifier} to {drone} due to an exception: "
                                         f"{repr(e)}! See the log for more details.")

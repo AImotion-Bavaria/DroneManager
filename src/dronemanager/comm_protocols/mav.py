@@ -1171,10 +1171,10 @@ class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
                 self.secondary_control = (ctrl.sysid_secondary_control, ctrl.compid_secondary_control)
 
     def log_status(self):
-        intro_str = f"\t\t{self.prettify_identifier(self.gimbal_identifier)}"
-        ctrl_string = f"\t\tIn control: {'Yes' if self.in_control else 'No'}, primary: {self.primary_control}, secondary: {self.secondary_control}"
-        att_str = f"\t\tYaw: {self.yaw}, Pitch: {self.pitch}, Roll: {self.roll}"
-        abs_att_str = f"\t\tAbsYaw: {self.roll_absolute}, AbsPitch: {self.pitch_absolute}, AbsRoll: {self.yaw_absolute}"
+        intro_str = f"{self.prettify_identifier(self.gimbal_identifier)}"
+        ctrl_string = f"\tIn control: {'Yes' if self.in_control else 'No'}, primary: {self.primary_control}, secondary: {self.secondary_control}"
+        att_str = f"\tYaw: {self.yaw}, Pitch: {self.pitch}, Roll: {self.roll}"
+        abs_att_str = f"\tAbsYaw: {self.roll_absolute}, AbsPitch: {self.pitch_absolute}, AbsRoll: {self.yaw_absolute}"
         self.logger.info(f"Gimbal {self.gimbal_identifier} status:\n{intro_str}\n{ctrl_string}\n{att_str}\n{abs_att_str}")
 
     async def take_control(self, timeout: float = 5) -> bool:
@@ -1243,7 +1243,7 @@ class MAVSDKGimbal(Gimbal[MAVSDKDrone]):
         self.logger.info(f"Setting gimbal {self.gimbal_identifier} angular rates to YPR: {yaw_rate, pitch_rate, roll_rate}")
         if roll_rate is not None:
             self.logger.warning("This gimbal can't accept roll angles, self levels automatically!")
-        res = await self._error_wrapper(self.drone.mavgimbal.set_angles, self.gimbal_id, 0, pitch_rate, yaw_rate, self.mode, SendMode.ONCE)
+        res = await self._error_wrapper(self.drone.mavgimbal.set_angular_rates, self.gimbal_id, 0, pitch_rate, yaw_rate, self.mode, SendMode.ONCE)
         if not res:
             self.logger.info(f"Gimbal {self.gimbal_identifier} refused angular rate command!")
         else:

@@ -499,6 +499,9 @@ class CommandScreen(Screen):
                 for arg in check_cli_command_signatures(command):
                     is_invalid, name, is_list, is_required, accepts_none, base_type, is_kwonly, has_default, default = arg
                     arg_name = name if is_required else f"--{name}"
+                    # __future__ annotations returns the type itself, instead of a type object, but we need type object
+                    if not isinstance(base_type, type):
+                        base_type = type(base_type)
                     arg_kwargs = {
                         "type": base_type,
                     }
@@ -510,8 +513,9 @@ class CommandScreen(Screen):
                         arg_kwargs["nargs"] = "*"
                     if has_default:
                         arg_kwargs["default"] = default
+                    self.logger.debug(f"Adding argument {arg_name}: {arg_kwargs}")
                     tmp_parser.add_argument(arg_name, **arg_kwargs)
-                    self.logger.debug(f"Added Argument {arg_name}: {base_type, is_list, is_required}")
+                    self.logger.debug(f"Added argument {arg_name}!")
                 self.dynamic_commands[cli_command] = command
             return True
         except Exception as e:
