@@ -54,7 +54,7 @@ class StreamPlugin(Plugin):
         
         # Run the loop as a background task so we don't block the CLI or DroneManager
         self.stream_task = asyncio.create_task(self._stream_loop(target_ip, target_port))
-        self._running_tasks.add(self.stream_task)
+        self.running_tasks.add(self.stream_task)
         return True
 
     async def stop_stream(self):

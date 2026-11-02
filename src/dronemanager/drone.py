@@ -46,11 +46,12 @@ class Battery:
 
 
 class DroneComProtocol(ABC):
-    """Abstract base class for drone communication protocols, such as MAVLink."""
+    """Abstract base class for drone communication protocols, such as MAVLink.
+    """
 
     NAME = "YOUDIDSOMETHINGWRONG"
 
-    SUPPORTS: dict[str, type] = {}
+    SUPPORTS: dict[str, type | None] = {}
     # A dictionary with strings about what kind of extra things, such as gimbals, this protocol supports. Plugins
     # define what or how things should be listed here, for example the gimbal plugin checks for the presence of a
     # "gimbal" entry. The value should be the class for this kind of thing and this com protocol.
@@ -75,11 +76,13 @@ class DroneComProtocol(ABC):
 
         The connection string can also be used as an identifier to remove the connection again.
 
-        Return values determine other behaviour by DroneManager in regard to this connection.
+        Return values determine other behaviour by DroneManager in regard to this connection::
+
         - Successfully adding a connection should return ``True``.
         - An already existing connection should return ``False``.
         - A failed connection should raise an exception. This is used to inform the user, and so should contain
           relevant information.
+
         """
         raise NotImplementedError
 
@@ -602,6 +605,15 @@ class Drone(ABC, Generic[CommType]):
 
     @abstractmethod
     async def kill(self) -> bool:
+        pass
+
+    @abstractmethod
+    async def set_manual_control_input(self, x, y, z, r):
+        pass
+
+    @abstractmethod
+    async def send_external_tracking_data(self, position: np.ndarray, rotation: np.ndarray,
+                                          covariance: np.ndarray | None = None):
         pass
 
     def clear_queue(self) -> None:

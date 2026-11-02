@@ -12,7 +12,7 @@ import pathlib
 import sys
 
 import dronemanager.core
-from dronemanager.utils import DM_INSTALL_DIR, SRC_DIR
+from dronemanager.utils import DM_INSTALL_DIR, SRC_DIR, cancel_running_tasks
 
 
 # TODO: Figure out scheduling
@@ -60,11 +60,11 @@ class Plugin(abc.ABC):
         self.name = name
         self.cli_commands = {}
         self.background_functions = []
-        self._running_tasks = set()
+        self.running_tasks = set()
 
     def start_background_functions(self):
         for coro in self.background_functions:
-            self._running_tasks.add(asyncio.create_task(coro))
+            self.running_tasks.add(asyncio.create_task(coro))
 
     async def start(self):
         """ Starts any background functions."""
@@ -72,10 +72,7 @@ class Plugin(abc.ABC):
 
     async def close(self):
         """ Ends all running tasks functions."""
-        while len(self._running_tasks) > 0:
-            task = self._running_tasks.pop()
-            if isinstance(task, asyncio.Task):
-                task.cancel()
+        cancel_running_tasks(self.running_tasks)
 
 
 class MetaPlugin(Plugin, abc.ABC):

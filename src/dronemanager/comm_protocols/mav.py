@@ -24,6 +24,8 @@ from mavsdk.asyncio.plugins.mavlink_direct import MavlinkMessage, MavlinkDirectA
 from mavsdk.asyncio.plugins.param import ParamAsync
 from mavsdk.asyncio.plugins.camera import CameraAsync, CameraError
 from mavsdk.asyncio.plugins.gimbal import GimbalAsync, GimbalError
+from mavsdk.asyncio.plugins.mocap import MocapAsync, MocapError
+from mavsdk.asyncio.plugins.mocap import VisionPositionEstimate, PositionBody, AngleBody, Covariance
 
 from dronemanager.drone import DroneComProtocol
 from dronemanager.drone import Battery, Drone, DroneConfig, DroneParams, FlightMode, FixType
@@ -38,7 +40,7 @@ from dronemanager.utils import CACHE_DIR, coroutine_awaiter, parse_address, rela
 class MAVSDKComm(DroneComProtocol):
 
     NAME: str = "mav"
-    SUPPORTS: dict[str, type] = {}
+    SUPPORTS: dict[str, type | None] = {}
 
     def __init__(self, logger, system_id: int, component_id: int):
         super().__init__(logger)
@@ -180,6 +182,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
     mavmanual: ManualControlAsync
     mavcamera: CameraAsync
     mavgimbal: GimbalAsync
+    mavmocap: MocapAsync
 
     def __init__(self, comm_protocol: MAVSDKComm, system: System, drone_identifier: str):
         super().__init__(comm_protocol, drone_identifier)
@@ -221,6 +224,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         self.mavmanual = ManualControlAsync(self.system)
         self.mavcamera = CameraAsync(self.system)
         self.mavgimbal = GimbalAsync(self.system)
+        self.mavmocap = MocapAsync(self.system)
 
         # Init path generator
         try:
@@ -735,9 +739,15 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             result = await self._error_wrapper(self.mavaction.takeoff, ActionError)
             target_flight_mode = FlightMode.TAKEOFF
         elif flightmode == "position":
+            self.clear_queue()
+            self.cancel_action()
+            await self.path_follower.deactivate()
             result = await self._error_wrapper(self.mavmanual.start_position_control, ManualControlError)
             target_flight_mode = FlightMode.POSCTL
         elif flightmode == "altitude":
+            self.clear_queue()
+            self.cancel_action()
+            await self.path_follower.deactivate()
             result = await self._error_wrapper(self.mavmanual.start_altitude_control, ManualControlError)
             target_flight_mode = FlightMode.ALTCTL
         else:
@@ -1086,6 +1096,20 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
     async def set_manual_control_input(self, x, y, z, r):
         result = await self._error_wrapper(self.mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
         return result
+
+    async def send_external_tracking_data(self, position: list[float], rotation: list[float], covariance: np.ndarray = None):
+        covariance = Covariance([math.nan]) if covariance is None else covariance
+        vis_pos_estimate = VisionPositionEstimate(0,
+                                                  PositionBody(*position),
+                                                  AngleBody(*rotation),
+                                                  covariance,
+                                                  0)
+        if self.is_connected:
+            res = await self._error_wrapper(self.mavmocap.set_vision_position_estimate, MocapError,
+                                            vis_pos_estimate, reraise=True)
+            return res
+        else:
+            return False
 
     async def stop(self):
         # Override whatever else is going on and land
@@ -1817,3 +1841,5 @@ def _xml_cache_filepath(uri, version):
 # COMM SUPPORTS
 MAVSDKComm.SUPPORTS["gimbal"] = MAVSDKGimbal
 MAVSDKComm.SUPPORTS["camera"] = MAVSDKCamera
+MAVSDKComm.SUPPORTS["mocap"] = None
+MAVSDKComm.SUPPORTS["manual"] = None

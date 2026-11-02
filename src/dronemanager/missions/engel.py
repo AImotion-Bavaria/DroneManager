@@ -327,7 +327,7 @@ class ENGELDataMission(Mission):
 
                 # Set camera parameters
                 cam_set_task = asyncio.create_task(self.set_camera_parameters(capture.camera_parameters))
-                self._running_tasks.add(cam_set_task)
+                self.running_tasks.add(cam_set_task)
                 # Fly to position and point gimbal
                 # Have to reset gimbal position to drone-relative 0 to prevent running into gimbal limit
                 await self.gimbal.set_gimbal_mode(YawMode.YAW_FOLLOW)
@@ -569,8 +569,8 @@ class ENGELDataMission(Mission):
     def _do_capture_controller(self):
         capture_task = asyncio.create_task(self.do_capture())
         capture_awaiter = asyncio.create_task(coroutine_awaiter(capture_task, self.logger))
-        self._running_tasks.add(capture_task)
-        self._running_tasks.add(capture_awaiter)
+        self.running_tasks.add(capture_task)
+        self.running_tasks.add(capture_awaiter)
 
     def _swap_gimbal_axis(self):
         self.logger.info(f"Now controlling gimbal {'Pitch' if self._control_gimbal_pitch else 'Yaw'}")
