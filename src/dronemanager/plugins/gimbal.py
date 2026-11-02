@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import asyncio
 import math
-from typing import Generic
+from typing import Generic, Type
 
 from dronemanager.drone import DroneType
 from dronemanager.plugin import Plugin
@@ -29,6 +29,7 @@ class GimbalPlugin(Plugin):
     def __init__(self, dm, logger, name):
         super().__init__(dm, logger, name)
         self.cli_commands = {
+            "list": self.list_potential_gimbals,
             "add": self.add_gimbals,
             "remove": self.remove_gimbals,
             "take": self.take_control,
@@ -43,10 +44,8 @@ class GimbalPlugin(Plugin):
         self.gimbals: dict[str, list[Gimbal]] = {}  # Dictionary with drone names as keys and gimbals as values
 
     async def start(self):
-        self.logger.debug("Starting Gimbal plugin...")
         await super().start()
-        #for drone in self.dm.drones:
-        #    await self.add_gimbals(drone)
+        self.logger.debug("Started Gimbal plugin.")
 
     async def close(self):
         """ Removes all gimbals """
@@ -60,16 +59,28 @@ class GimbalPlugin(Plugin):
             return False
         return True
 
-    async def add_gimbals(self, drone: str):
-        """ Add Gimbals from/for a given drone to the plugin"""
-        # Check if the drone comm protocol even supports gimbals
+    async def _get_potential_gimbal_idents(self, drone: str):
         drone_obj = self.dm.drones[drone]
         if "gimbal" not in drone_obj.SUPPORTS:
             self.logger.info(f"The communication protocol {drone_obj.comm} for {drone} does not support gimbals!")
-            return False
-        # Get any gimbals
-        gimbal_class: type(Gimbal) = drone_obj.SUPPORTS["gimbal"]
+        gimbal_class: Type[Gimbal] = drone_obj.SUPPORTS["gimbal"]
         gimbal_identifiers = await gimbal_class.get_gimbals(drone_obj)
+        return gimbal_identifiers
+
+    async def list_potential_gimbals(self, drone: str):
+        gimbal_identifiers = await self._get_potential_gimbal_idents(drone)
+        drone_obj = self.dm.drones[drone]
+        gimbal_class: Type[Gimbal] = drone_obj.SUPPORTS["gimbal"]
+        if len(gimbal_identifiers) == 0:
+            self.logger.info(f"No gimbals found for {drone}")
+        out_str = "\n".join([gimbal_class.prettify_identifier(identifier) for identifier in gimbal_identifiers])
+        self.logger.info(f"Discovered gimbals for drone {drone}:\n{out_str}")
+
+    async def add_gimbals(self, drone: str):
+        """Add Gimbals from/for a given drone to the plugin"""
+        gimbal_identifiers = await self._get_potential_gimbal_idents(drone)
+        drone_obj = self.dm.drones[drone]
+        gimbal_class: Type[Gimbal] = drone_obj.SUPPORTS["gimbal"]
         if len(gimbal_identifiers) == 0:
             self.logger.info(f"No gimbals found for {drone}")
             return False
@@ -95,31 +106,27 @@ class GimbalPlugin(Plugin):
     async def remove_gimbals(self, drone: str):
         """Remove gimbals for a drone."""
         if drone not in self.gimbals:
-            self.logger.warning(f"Drone {str} doesn't have any gimbals!")
+            self.logger.warning(f"Drone {drone} doesn't have any gimbals!")
+            return False
         else:
             self.logger.info(f"Removing gimbals for drone {drone}")
             gimbal_list = self.gimbals.pop(drone)
             for gimbal in gimbal_list:
                 await gimbal.close()
+            await self.status()
+            return True
 
     async def status(self):
-        for drone in self.dm.drones:
-            if self.check_has_gimbal(drone):
-                self.logger.info(f"Gimbals for drone {drone}:")
-                for gimbal in self.gimbals[drone]:
-                    gimbal.log_status()
+        for drone in self.gimbals:
+            self.logger.info(f"Gimbals for drone {drone}:")
+            for gimbal in self.gimbals[drone]:
+                gimbal.log_status()
 
     async def take_control(self, drone: str, timeout: float = 5) -> bool:
         """Take control of gimbal(s) for this drone."""
         if self.check_has_gimbal(drone):
             if len(self.gimbals[drone]) == 1:
-                self.logger.info(f"Taking control of gimbal for drone {drone}")
-                res = await self.gimbals[drone][0].take_control(timeout=timeout)
-                if res:
-                    self.logger.info(f"Took control over gimbal {drone}")
-                else:
-                    self.logger.info(f"Couldn't take control over gimbal on {drone}!")
-                return res
+                return await self.gimbals[drone][0].take_control(timeout=timeout)
             else:
                 raise NotImplementedError("Currently only 1 gimbal per drone is supported")
         return False
@@ -128,12 +135,7 @@ class GimbalPlugin(Plugin):
         """Release control of gimbal(s) for this drone."""
         if self.check_has_gimbal(drone):
             if len(self.gimbals[drone]) == 1:
-                self.logger.info(f"Releasing control over gimbal for {drone}")
                 res = await self.gimbals[drone][0].release_control(timeout=timeout)
-                if res:
-                    self.logger.info(f"Released control over gimbal on {drone}")
-                else:
-                    self.logger.info(f"Couldn't release control over gimbal on {drone}")
                 return res
             else:
                 raise NotImplementedError("Currently only 1 gimbal per drone is supported")
@@ -142,13 +144,7 @@ class GimbalPlugin(Plugin):
     async def set_gimbal_angles(self, drone: str, yaw: float, pitch: float, roll: float | None = None, tolerance: float = 1):
         if self.check_has_gimbal(drone):
             if len(self.gimbals[drone]) == 1:
-                self.logger.info(f"Setting gimbal angles for {drone} to YPR: {yaw, pitch, roll} with tolerance {tolerance}")
-                res = await self.gimbals[drone][0].set_gimbal_angles(yaw, pitch, roll=roll, tolerance=tolerance)
-                if not res:
-                    self.logger.info(f"Couldn't set gimbal angles!")
-                else:
-                    self.logger.info(f"Gimbal {drone} angles set to {yaw, pitch, roll}")
-                return res
+                return await self.gimbals[drone][0].set_gimbal_angles(yaw, pitch, roll=roll, tolerance=tolerance)
             else:
                 raise NotImplementedError("Currently only 1 gimbal per drone is supported")
         return False
@@ -156,30 +152,15 @@ class GimbalPlugin(Plugin):
     async def set_gimbal_rate(self, drone: str, yaw_rate: float, pitch_rate: float, roll_rate: float | None = None):
         if self.check_has_gimbal(drone):
             if len(self.gimbals[drone]) == 1:
-                self.logger.info(f"Setting gimbal angles for {drone} to YPR rates: {yaw_rate, pitch_rate, roll_rate}")
-                res = await self.gimbals[drone][0].set_gimbal_rates(yaw_rate, pitch_rate, roll_rate=roll_rate)
-                if not res:
-                    self.logger.info(f"Couldn't set gimbal angles!")
-                else:
-                    self.logger.info(f"Gimbal {drone} angular rates set to {yaw_rate, pitch_rate, roll_rate}")
+                return await self.gimbals[drone][0].set_gimbal_rates(yaw_rate, pitch_rate, roll_rate=roll_rate)
             else:
                 raise NotImplementedError("Currently only 1 gimbal per drone is supported")
         return False
 
-    async def point_gimbal_at(self, drone: str, x: float, y: float, z: float, relative: bool = False):
+    async def point_gimbal_at(self, drone: str, lat: float, long: float, amsl: float):
         if self.check_has_gimbal(drone):
             if len(self.gimbals[drone]) == 1:
-                if relative:
-                    self.logger.info(f"Pointing gimbal {drone} pointing at local {x, y, z}")
-                    res =  await self.gimbals[drone][0].point_gimbal_at_relative(x, y, z)
-                else:
-                    self.logger.info(f"Pointing gimbal {drone} pointing at Lat {x}, Long {y}, AMSL {z}")
-                    res =  await self.gimbals[drone][0].point_gimbal_at(x, y, z)
-                if not res:
-                    self.logger.info(f"Couldn't point gimbal {drone}!")
-                else:
-                    self.logger.info(f"Gimbal {drone} accepted command!")
-                return res
+                return await self.gimbals[drone][0].point_gimbal_at(lat, long, amsl)
             else:
                 raise NotImplementedError("Currently only 1 gimbal per drone is supported")
         return False
@@ -187,12 +168,7 @@ class GimbalPlugin(Plugin):
     async def set_gimbal_mode(self, drone: str, mode: str):
         if self.check_has_gimbal(drone):
             if len(self.gimbals[drone]) == 1:
-                res = await self.gimbals[drone][0].set_gimbal_mode(self._MODE_MAP[mode])
-                if res:
-                    self.logger.info(f"Gimbal mode changed to {mode}")
-                else:
-                    self.logger.warning("Couldn't change gimbal mode!")
-                return res
+                return await self.gimbals[drone][0].set_gimbal_mode(self._MODE_MAP[mode])
             else:
                 raise NotImplementedError("Currently only 1 gimbal per drone is supported")
         return False
@@ -211,7 +187,6 @@ class Gimbal(ABC, Generic[DroneType]):
         self.pitch_absolute: float = math.nan
         self.yaw_absolute: float = math.nan
         self.mode: YawMode = YawMode.YAW_FOLLOW
-        self.control: tuple[float, float] = (math.nan, math.nan)
         self._running_tasks = set()
 
     @classmethod
@@ -223,6 +198,12 @@ class Gimbal(ABC, Generic[DroneType]):
         """
         raise NotImplementedError
 
+    @classmethod
+    @abstractmethod
+    def prettify_identifier(cls, identifier) -> str:
+        """A pretty, human understandable version of the identifier."""
+        raise NotImplementedError
+
     @abstractmethod
     async def start(self):
         """Start whatever processing is required to use this gimbal."""
@@ -230,7 +211,10 @@ class Gimbal(ABC, Generic[DroneType]):
 
     @abstractmethod
     async def close(self):
-        """Releases control and cancels running tasks."""
+        """Close the gimbal object, releasing any resources.
+
+        This base implementation releases control and cancels running tasks. Implementing classes should call this
+        during their own close procedure."""
         try:
             await self.release_control()
         except Exception as e:
@@ -246,7 +230,7 @@ class Gimbal(ABC, Generic[DroneType]):
 
     @abstractmethod
     def log_status(self):
-        """Should write information about the gimbal status, such as position, mode, control, etc. to the logger"""
+        """Should write information about the gimbal status, such as position, mode, control, etc. to the logger."""
         raise NotImplementedError
 
     @abstractmethod
@@ -271,16 +255,6 @@ class Gimbal(ABC, Generic[DroneType]):
 
         The gimbal should stay locked on this coordinate as the drone moves. For hardware or protocols which do not
         support this, raise a descriptive Exception.
-        Should return whether the gimbal accepted the command.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def point_gimbal_at_relative(self, x, y, z) -> bool:
-        """Point the gimbal at a local coordinate.
-
-        The gimbal should stay locked on this coordinate as the drone moves. For hardware or protocols which do not
-        support this, a warning should be logged.
         Should return whether the gimbal accepted the command.
         """
         raise NotImplementedError

@@ -15,6 +15,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "numpy",
+    "lxml",
     "textual==8.2.*",
     "rich",
     "mavsdk>=4",

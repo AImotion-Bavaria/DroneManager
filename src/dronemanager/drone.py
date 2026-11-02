@@ -231,7 +231,7 @@ class Drone(ABC, Generic[CommType]):
         # Internal object which should be used to prevent multiple drone objects for the same physical drone.
         self.initialized = False
         # If this is a placeholder for a potential drone connection or already in use by DroneManager. Should be set to
-        # True at the end of the "initialize" method.
+        # True at the end of the "start" method.
 
         self.autopilot = None
 
@@ -259,7 +259,7 @@ class Drone(ABC, Generic[CommType]):
         self._running_tasks = set()  # Keeps track of coroutines
 
     @abstractmethod
-    def initialize(self, name: str, config: DroneConfig):
+    def start(self, name: str, config: DroneConfig):
         # A drone is initialized when it is actually added to DroneManager.
         # In particular, logging and telemetry processing only happens ance this function is called, and the config attribute is only available after.
         # Implementing functions should call this first and then do whatever else they need to do, including path
@@ -452,7 +452,7 @@ class Drone(ABC, Generic[CommType]):
         """Uninitializes the drone, shutting down related processing.
 
         Base implementation ends the thread, stops coroutines and closes logging.
-        Implementing functions should call this during their own shutdown procedure."""
+        Implementing classes should call this during their own shutdown procedure."""
         cancel_running_tasks(self._running_tasks)
         for handler in self.logging_handlers:
             self.logger.removeHandler(handler)
