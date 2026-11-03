@@ -105,7 +105,7 @@
       "drone_name": "default",
       "comm_protocol": "mav",
       "drone_identifier": "1",
-      "connection": "udp://:14540",
+      "connection": "udp://0.0.0.0:14540",
       "position_rate": 5.0,
       "max_h_vel": 2.0,
       "max_down_vel": 0.5,

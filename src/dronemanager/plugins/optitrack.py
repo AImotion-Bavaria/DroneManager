@@ -150,7 +150,7 @@ class OptitrackPlugin(Plugin):
         #: Error counter for MAVLink mocap error. These tend to occur in clusters, so this reduces log spam.
         self._err_count = 0
 
-    async def connect_server(self, remote: str = None, local: str = None) -> bool:
+    async def connect_server(self, remote: str | None = None, local: str | None = None) -> bool:
         """Connect to a Motive server.
 
         Note that the Motive app must be configured for streaming.
@@ -208,7 +208,7 @@ class OptitrackPlugin(Plugin):
         """
         if name not in self.dm.drones:
             self.logger.warning(f"No drone named {name}!")
-        elif "mocap" not in self.dm.drones[name].SUPPORTS:
+        elif "mocap" not in self.dm.drones[name].comm.SUPPORTS:
             self.logger.warning(f"Drone {name} comm protocol {self.dm.drones[name].comm.name} does not support mocap!")
         elif track_id not in self.available_bodies:
             self.logger.warning(f"No track {track_id} available!")
@@ -537,6 +537,8 @@ class CoordinateConversion:
         Returns:
             A tuple with the converted position and orientation as euler angles.
         """
+        assert self.rotation_world is not None and self.rotation_body is not None, \
+            "Can't do coordinate conversion without rotation matrices!"
         converted_pos = self.rotation_world.apply(tracking_pos)
         converted_rot = np.asarray((self.rotation_world * tracking_rot * self.rotation_body).as_euler(out_sequence,
                                                                                                       degrees=degrees))

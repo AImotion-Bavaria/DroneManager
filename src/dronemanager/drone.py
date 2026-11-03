@@ -306,9 +306,10 @@ class Drone(ABC, Generic[CommType]):
                         action, fut = self.action_queue.popleft()
                         self.current_action = asyncio.create_task(action)
                         try:
-                            result = await self.current_action
-                            fut.set_result(result)
-                            self.current_action = None
+                            if self.current_action is not None:
+                                result = await self.current_action
+                                fut.set_result(result)
+                                self.current_action = None
                         except asyncio.CancelledError:
                             pass
                         except Exception as e:
@@ -409,7 +410,7 @@ class Drone(ABC, Generic[CommType]):
 
     @property
     @abstractmethod
-    def position_global(self) -> np.ndarray[np.float64]:
+    def position_global(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         """
 
         :return: Array with the GPS coordinates [latitude, longitude, AMSL]
@@ -418,12 +419,12 @@ class Drone(ABC, Generic[CommType]):
 
     @property
     @abstractmethod
-    def position_ned(self) -> np.ndarray[np.float64]:
+    def position_ned(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         pass
 
     @property
     @abstractmethod
-    def velocity(self) -> np.ndarray[np.float64]:
+    def velocity(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         pass
 
     @property
@@ -433,7 +434,7 @@ class Drone(ABC, Generic[CommType]):
 
     @property
     @abstractmethod
-    def attitude(self) -> np.ndarray[np.float64]:
+    def attitude(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         """ RPY in degrees"""
         pass
 
@@ -589,10 +590,6 @@ class Drone(ABC, Generic[CommType]):
         :param tolerance:
         :return:
         """
-        pass
-
-    @abstractmethod
-    async def orbit(self, radius, velocity, latitude, longitude, amsl) -> bool:
         pass
 
     @abstractmethod

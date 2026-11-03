@@ -270,7 +270,7 @@ class Camera(ABC, Generic[DroneType]):
         """Log loaded parameters and settings for the camera."""
         raise NotImplementedError
 
-    def parse_parameter_value(self, param_name: str, param_value: str) -> bool | int | float | str:
+    def parse_parameter_value(self, param_name: str, param_value: str) -> bool | int | float | str | None:
         """Parse a parameter value from a string (for example from the CLI).
 
         Exact behaviour will depend on implementing subclasses.

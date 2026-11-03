@@ -91,7 +91,7 @@ class Action:
         if self.label == other.label \
                 and self.input_type is other.input_type \
                 and self.input_id == other.input_id \
-                and self.func == other.func:
+                and self.func is other.func:
             return True
         return False
 
@@ -104,7 +104,7 @@ class Action:
         return f"{self.label}: {self.input_type, self.input_id}, {self.func}"
 
     @property
-    def controller_id(self) -> int | list[int] | None:
+    def controller_id(self) -> int | list[int | None] | None:
         """The actual ID used by the controller directly.
 
         DroneManager IDs are incremented by 1 to allow negatives to be used unambiguously.
@@ -936,6 +936,7 @@ class ControllerPlugin(Plugin):
             else:
                 controller = self.drones.pop(drone)
                 controller.drone = None
+                self.logger.info(f"Unassigned drone {drone} from controller {controller.id}")
 
     async def control_loop(self):
         """Main control loop.

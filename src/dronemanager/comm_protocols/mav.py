@@ -14,9 +14,9 @@ from typing import Type, Any, Callable
 import requests
 
 import mavsdk
-from mavsdk.asyncio import Mavsdk, Configuration, System
+from mavsdk.asyncio import Mavsdk, Configuration, System, MavsdkError
 from mavsdk.asyncio.plugins.telemetry import StatusTextType, TelemetryAsync
-from mavsdk.asyncio.plugins.action import ActionAsync, ActionError, OrbitYawBehavior
+from mavsdk.asyncio.plugins.action import ActionAsync, ActionError
 from mavsdk.asyncio.plugins.offboard import PositionNedYaw, PositionGlobalYaw, VelocityNedYaw, AccelerationNed, OffboardError, \
     VelocityBodyYawspeed, OffboardAsync
 from mavsdk.asyncio.plugins.manual_control import ManualControlError, ManualControlAsync
@@ -98,10 +98,10 @@ class MAVSDKComm(DroneComProtocol):
     async def discovered_other(self):
         raise NotImplementedError
 
-    async def add_drone(self, drone_name: str, system_id: str, config: DroneConfig):
-        drone = self.systems[int(system_id)]
+    async def add_drone(self, drone_name: str, drone_identifier: str, config: DroneConfig):
+        drone = self.systems[int(drone_identifier)]
         if drone.initialized:
-            self.logger.warning(f"Couldn't add drone {drone_name} for ID {system_id} as a drone with that ID already "
+            self.logger.warning(f"Couldn't add drone {drone_name} for ID {drone_identifier} as a drone with that ID already "
                                 f"exists: {drone.name}!")
             return None
         drone.start(drone_name, config=config)
@@ -198,7 +198,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         self._position_g: np.ndarray = np.zeros((4,), dtype=np.float64)     # Latitude, Longitude, AMSL, Relative altitude to takeoff
         self._position_ned: np.ndarray = np.zeros((3,), dtype=np.float64)   # NED
         self._velocity: np.ndarray = np.zeros((3,), dtype=np.float64)       # NED
-        self._attitude: np.ndarray = np.zeros((3,), dtype=np.float64)       # Roll, pitch and yaw, with positives right up and right.
+        self._attitude: np.ndarray[tuple[int], np.dtype[np.float64]] = np.zeros((3,), dtype=np.float64)       # Roll, pitch and yaw, with positives right up and right.
         self._heading: float = math.nan
         self._batteries: dict[int, Battery] = {}
 
@@ -286,7 +286,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         return self._gps_info
 
     @property
-    def position_global(self) -> np.ndarray[np.float64]:
+    def position_global(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         return self._position_g[:3]
 
     @property
@@ -294,11 +294,11 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         return self._position_g[3]
 
     @property
-    def position_ned(self) -> np.ndarray[np.float64]:
+    def position_ned(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         return self._position_ned
 
     @property
-    def velocity(self) -> np.ndarray[np.float64]:
+    def velocity(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         return self._velocity
 
     @property
@@ -306,7 +306,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         return np.linalg.norm(self._velocity, 2)
 
     @property
-    def attitude(self) -> np.ndarray[np.float64]:
+    def attitude(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         return self._attitude
 
     @property
@@ -670,7 +670,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         self.return_position = Waypoint(WayPointType.POS_NED, pos=self.position_ned, yaw=self.attitude[2])
         return res
 
-    def _get_pos_ned_yaw(self) -> np.ndarray[np.float64]:
+    def _get_pos_ned_yaw(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         pos_yaw = np.zeros((4,), dtype=np.float64)
         pos_yaw[:3] = self.position_ned
         pos_yaw[3] = self.attitude[2]
@@ -686,7 +686,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         await super().takeoff(altitude=altitude)
         self._can_takeoff()
         result = await self._error_wrapper(self.mavaction.takeoff, ActionError)
-        if isinstance(result, Exception):
+        if not result:
             self.logger.warning("Takeoff denied!")
         while self.flightmode is not FlightMode.TAKEOFF:
             await asyncio.sleep(1 / self.position_update_rate)
@@ -752,7 +752,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             target_flight_mode = FlightMode.ALTCTL
         else:
             raise KeyError(f"{flightmode} is not a valid flightmode!")
-        if isinstance(result, Exception):
+        if not result:
             self.logger.warning(f"Couldn't change flight mode due to exception {repr(result)}")
             return False
         elif not result:
@@ -985,52 +985,6 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             waypoint = Waypoint(WayPointType.POS_NED, pos=self.position_ned + offset, yaw=target_yaw)
         return await self.fly_to(waypoint=waypoint, put_into_offboard=True, tolerance=tolerance)
 
-    async def go_to(self, local: np.ndarray | None = None, gps: np.ndarray | None = None, yaw: float | None = None,
-                     waypoint: Waypoint | None = None, tolerance=0.25,):
-        assert local is not None or gps is not None or waypoint is not None, \
-            "Must provide a full set of either NED coordinates, GPS coordinates or a waypoint!"
-
-        # If flightmode is not Hold, goto hold
-        if self.flightmode != FlightMode.HOLD:
-            self.logger.info("Changing flightmode to hold")
-            await self.change_flight_mode("hold")
-
-        if waypoint is not None:
-            if waypoint.type is WayPointType.POS_GLOBAL:
-                gps = waypoint.gps
-            else:
-                offset = waypoint.pos - self.position_ned
-                gps = relative_gps(self.position_global, offset)
-            yaw = waypoint.yaw
-        elif gps is not None:
-            pass
-        elif local is not None:
-            offset = local - self.position_ned
-            gps = relative_gps(self.position_global, offset)
-
-        # Send goto command
-        await self.mavaction.goto_location(*gps, yaw)
-
-        while True:
-            # Check if we have arrived at target waypoint
-            reached = (self.is_at_gps(gps, tolerance=tolerance) and self.is_at_heading(yaw, tolerance=1))
-
-            # Print message and stop if we have reached waypoint
-            if reached:
-                self.logger.info("Reached target position!")
-                return True
-            await asyncio.sleep(1 / self.position_update_rate)
-
-    async def orbit(self, radius, velocity, center_lat, center_long, amsl):
-        await super().orbit(radius, velocity, center_lat, center_long, amsl)
-        if self.path_follower.is_active:
-            await self.path_follower.deactivate()
-        if not self.is_armed or not self.in_air:
-            raise RuntimeError("Can't fly a landed or unarmed drone!")
-        yaw_behaviour = OrbitYawBehavior.HOLD_FRONT_TO_CIRCLE_CENTER
-        await self._error_wrapper(self.mavaction.do_orbit, ActionError, radius, velocity, yaw_behaviour,
-                                  center_lat, center_long, amsl)
-
     async def land(self):
         self.logger.info("Trying to land...")
         if self.path_follower.is_active:
@@ -1061,14 +1015,14 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                 going_down = False
             old_alt = cur_alt
             target_pos[2] = cur_alt + 0.5
-            await self.set_setpoint(Waypoint(WayPointType.POS_VEL_NED, pos=target_pos[:3], vel=[0, 0, 0.3], yaw=target_pos[3]))
+            await self.set_setpoint(Waypoint(WayPointType.POS_VEL_NED, pos=target_pos[:3], vel=np.asarray([0, 0, 0.3]), yaw=target_pos[3]))
             await asyncio.sleep(1/update_freq)
         self.logger.info("Landed!")
         return True
 
     async def _land_using_landmode(self):
         result = await self._error_wrapper(self.mavaction.land, ActionError)
-        if isinstance(result, Exception):
+        if not result:
             self.logger.warning("Couldn't go into land mode")
         while self.flightmode is not FlightMode.LAND:
             await asyncio.sleep(1 / self.position_update_rate)
@@ -1097,7 +1051,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         result = await self._error_wrapper(self.mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
         return result
 
-    async def send_external_tracking_data(self, position: list[float], rotation: list[float], covariance: np.ndarray = None):
+    async def send_external_tracking_data(self, position: np.ndarray, rotation: np.ndarray, covariance: np.ndarray | None = None):
         covariance = Covariance([math.nan]) if covariance is None else covariance
         vis_pos_estimate = VisionPositionEstimate(0,
                                                   PositionBody(*position),
@@ -1127,12 +1081,29 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         await super().kill()
         return True
 
-    async def _error_wrapper(self, func, error_type: Type, *args, **kwargs):
+    async def _error_wrapper(self, func, error_type: Type[MavsdkError], *args, reraise = False, **kwargs):
+        """Wrapper for MAVSDK functions.
+
+        Intended for use with MAVSDK coroutines. Catches exceptions and returns False instead.
+
+        Args:
+            func: The coroutine, as a callable.
+            error_type: The type of error raised by func.
+            *args: Passed to the coroutine being executed.
+            reraise: If ``True``, exceptions are reraised.
+            **kwargs: Passed to the coroutine being executed.
+
+        Returns:
+            ``True`` if the MAVSDK call succeeds or ``False`` if the error type was raised.
+        """
         try:
             await func(*args, **kwargs)
         except error_type as e:
-            self.logger.error(f"MAV{error_type.__name__}: {e.result.name}")
-            return False
+            if reraise:
+                raise
+            else:
+                self.logger.error(e.result.name)
+                return False
         return True
 
 
@@ -1323,9 +1294,9 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
         return cam_identifiers, extra_info
 
     @classmethod
-    def prettify_identifier(cls, identifier, extra_info) -> str:
+    def prettify_identifier(cls, base_identifier, extra_info) -> str:
         vendor_name, model_name = extra_info.split(".")
-        return f"Camera with identifier {identifier}: Component ID {identifier}, Vendor {vendor_name}, Model {model_name}"
+        return f"Camera with identifier {base_identifier}: Component ID {base_identifier}, Vendor {vendor_name}, Model {model_name}"
 
     # TODO: Everything below this
 
@@ -1421,6 +1392,10 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
 
     async def get_cam_param_definition(self):
         try:
+            if self.cam_def_uri is None:
+                self.logger.warning("Can't load param definition without a URI to the definition."
+                                    "init_cam_info should've been called first.")
+                return False
             xml_str = await self._get_cam_definition(self.cam_def_uri, self.cam_def_version)
             if xml_str:
                 self._parse_cam_definition(xml_str)
@@ -1430,7 +1405,7 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
             self.logger.debug(repr(e), exc_info=True)
         return False
 
-    async def _get_cam_definition(self, uri: str, version) -> str | None:
+    async def _get_cam_definition(self, uri: str, version) -> bytes | None:
         xml_str = None
         try:
             self.logger.info(f"Loading cam {self.camera_identifier} definition")
@@ -1474,7 +1449,7 @@ class MAVSDKCamera(Camera[MAVSDKDrone]):
             self.logger.debug(repr(e), exc_info=True)
             return None
 
-    def _parse_cam_definition(self, cam_def_xml: str):
+    def _parse_cam_definition(self, cam_def_xml: bytes):
         try:
             root = etree.fromstring(cam_def_xml)
             params = root.findall(".//parameter")
