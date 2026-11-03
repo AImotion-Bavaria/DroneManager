@@ -7,7 +7,6 @@ assorted post-processing and meta-data handling.
 
 import asyncio
 import pathlib
-from collections.abc import Callable
 
 import numpy as np
 import json
@@ -20,8 +19,8 @@ from dronemanager.navigation.core import Waypoint, WayPointType
 from dronemanager.plugins.mission import Mission
 from dronemanager.sensors.ecowitt import WeatherData
 from dronemanager.plugins.camera import CameraParameter, Camera
-from dronemanager.plugins.gimbal import Gimbal
-from dronemanager.plugins.controllers import PS4Mapping
+from dronemanager.plugins.gimbal import Gimbal, YawMode
+from dronemanager.plugins.controllers import ActionInputType
 from dronemanager.utils import CACHE_DIR, coroutine_awaiter
 
 
@@ -147,8 +146,8 @@ class ENGELDataMission(Mission):
         self._gimbal_min_pitch = -44
 
         # Controller stuff
-        self._added_controller_buttons: dict[int, Callable] = {}
-        self._added_controller_axis_methods: set[Callable] = set()
+        self.controller = None
+        self._added_controller_actions: set[str] = set()
 
         # Gimbal is controlled with triggers, press more to move more. Press square to switch between pitch and yaw control.
         self._gimbal_rate = 0
@@ -163,10 +162,8 @@ class ENGELDataMission(Mission):
             self.logger.warning("Couldn't connect to weather sensor, using dummy values!")
 
     async def close(self):
-        for button, func in self._added_controller_buttons.items():
-            PS4Mapping.remove_method_from_button(button, func)
-        for func in self._added_controller_axis_methods:
-            PS4Mapping.remove_axis_method(func)
+        for action_name in self._added_controller_actions:
+            self.controller.mapping.remove_action(action_name)
         await super().close()
 
     async def connect(self):
@@ -191,22 +188,23 @@ class ENGELDataMission(Mission):
         # MAIN_CAM          "Visible"
         # ZOOM_THERMO_I     1.0
         # ZOOM_VISIBLE_I    1.0
-        self.logger.info("Setting camera parameters to default...")
+        self.logger.info("Setting camera parameters to mission defaults...")
         await self.camera.set_parameter("IMG_RAD_TIFF", True)
         await self.camera.set_parameter("IMG_RAD_JPEG", False)
-        await self.camera.set_parameter("IMG_IR_SUPER", self.camera.parse_param_value("IMG_IR_SUPER", "Off"))
+        await self.camera.set_parameter("IMG_IR_SUPER", "Off")
         await self.camera.set_parameter("IMG_SCREEN", False)
         await self.camera.set_parameter("IMG_VIS", True)
         await self.camera.set_parameter("IMG_VHR", True)
-        await self.camera.set_parameter("RANGE_TYPE", self.camera.parse_param_value("RANGE_TYPE", "Manual"))
+        await self.camera.set_parameter("RANGE_TYPE", "Manual")
         await self.camera.set_parameter("RANGE_MAX", 40.0)
         await self.camera.set_parameter("RANGE_MIN", 10.0)
-        await self.camera.set_parameter("MAIN_CAM", self.camera.parse_param_value("MAIN_CAM", "Visible"))
-        await self.camera.set_parameter("LAYOUT_MAIN", self.camera.parse_param_value("LAYOUT_MAIN", "Fullscreen"))
-        await self.camera.set_parameter("ZOOM_THERMO_I", self.camera.parse_param_value("ZOOM_THERMO_I", "1.0"))
-        await self.camera.set_parameter("ZOOM_VISIBLE_I", self.camera.parse_param_value("ZOOM_VISIBLE_I", "1.0"))
+        await self.camera.set_parameter("MAIN_CAM", "Visible")
+        await self.camera.set_parameter("LAYOUT_MAIN", "Fullscreen")
+        await self.camera.set_parameter("ZOOM_THERMO_I", "1.0")
+        await self.camera.set_parameter("ZOOM_VISIBLE_I", "1.0")
+        self.logger.info("Finished setting camera parameters.")
 
-    async def _imaged_captured_callback(self, msg):
+    def _imaged_captured_callback(self, msg):
         """ Check CAMERA_IMAGE_CAPTURED messages for capture_result and save info if success, log failure otherwise
 
         This message contains this info:
@@ -219,24 +217,29 @@ class ENGELDataMission(Mission):
         :param msg:
         :return:
         """
-        if msg.capture_result == 1:
-            if msg.time_utc < 1e12:  # Assume this is reporting time since boot if too small
-                time_stamp = datetime.datetime.now(datetime.UTC)
+        try:
+            fields = json.loads(msg.fields_json)
+            if fields["capture_result"] == 1:
+                if fields["time_utc"] < 1e12:  # Assume this is reporting time since boot if too small
+                    time_stamp = datetime.datetime.now(datetime.UTC)
+                else:
+                    time_stamp = datetime.datetime.fromtimestamp(fields["time_utc"] / 1e3, datetime.UTC)
+                gps = np.asarray([fields["lat"] / 1e7, fields["lon"] / 1e7, fields["alt"] / 1e3])
+                file_url = fields["file_url"]
+                cur_drone_att = self.dm.drones[self.drone_name].attitude.copy()
+                cur_gimbal_att = np.asarray([self.gimbal.roll, self.gimbal.pitch, self.gimbal.yaw])
+                if file_url in [self._current_capture.images[i].file_location for i in range(len(self._current_capture.images))]:
+                    self.logger.debug("Camera saved over image it just took")
+                else:
+                    self.logger.debug("Captured image, saving info...")
+                    self._current_capture.images.append(EngelImageInfo(time_stamp, gps, cur_drone_att,
+                                                                       cur_gimbal_att, self.gimbal.yaw_absolute, file_url))
             else:
-                time_stamp = datetime.datetime.fromtimestamp(msg.time_utc / 1e3, datetime.UTC)
-            gps = np.asarray([msg.lat / 1e7, msg.lon / 1e7, msg.alt / 1e3])
-            file_url = msg.file_url
-            cur_drone_att = self.dm.drones[self.drone_name].attitude.copy()
-            cur_gimbal_att = np.asarray([self.gimbal.roll, self.gimbal.pitch, self.gimbal.yaw])
-            if file_url in [self._current_capture.images[i].file_location for i in range(len(self._current_capture.images))]:
-                self.logger.debug("Camera saved over image it just took")
-            else:
-                self.logger.debug("Captured image, saving info...")
-                self._current_capture.images.append(EngelImageInfo(time_stamp, gps, cur_drone_att,
-                                                                   cur_gimbal_att, self.gimbal.yaw_absolute, file_url))
-        else:
-            self.logger.warning("Camera reports failure to capture image!")
-            self.logger.debug(msg.to_dict())
+                self.logger.warning("Camera reports failure to capture image!")
+                self.logger.debug(fields)
+        except Exception as e:
+            self.logger.warning("Exception in the image capture callback!")
+            self.logger.debug(repr(e), exc_info=True)
 
     async def do_capture(self, reference_capture: ENGELCaptureInfo | None = None):
         """ Capture an image and store relevant data. """
@@ -263,6 +266,7 @@ class ENGELDataMission(Mission):
 
             self._current_capture = capture
             res = await self.camera.take_picture()
+            self.logger.info(res)
 
             # If command denied: log, return False
             if not res:
@@ -270,16 +274,16 @@ class ENGELDataMission(Mission):
                 self.capturing = False
                 self._current_capture = None
                 return False
-            # If accepted: Collect metadata, listen for capture_info messages for CAMERA_IMAGE_CAPTURED using callback on mav_conn
+            # If accepted: Collect metadata, listen for capture_info messages for CAMERA_IMAGE_CAPTURED using callback
             else:
                 # Add callback, wait capture duration, remove callback
                 # TODO: We should know how many images the camera will take after the configure call, maybe just wait for all of those.
                 # TODO: Request images that didn't arrive using image index
                 # TODO: Directly associate images with the corresponding reference image somehow, instead of the larger "capture"
-                mav_conn = self.dm.drones[self.drone_name].mav_conn
-                mav_conn.add_drone_message_callback(263, self._imaged_captured_callback)
+                drone = self.dm.drones[self.drone_name]
+                drone.add_message_callback("CAMERA_IMAGE_CAPTURED", self._imaged_captured_callback)
                 await asyncio.sleep(self.max_capture_duration)
-                mav_conn.remove_drone_message_callback(263, self._imaged_captured_callback)
+                drone.remove_message_callback("CAMERA_IMAGE_CAPTURED", self._imaged_captured_callback)
                 self.capturing = False
                 self._current_capture = None
                 if len(capture.images) > 0:
@@ -320,60 +324,37 @@ class ENGELDataMission(Mission):
 
                 # Set camera parameters
                 cam_set_task = asyncio.create_task(self.set_camera_parameters(capture.camera_parameters))
-                self._running_tasks.add(cam_set_task)
+                self.running_tasks.add(cam_set_task)
                 # Fly to position and point gimbal
                 # Have to reset gimbal position to drone-relative 0 to prevent running into gimbal limit
-                await self.gimbal.set_gimbal_mode("follow")
-                res = False
-                while not res:
-                    res = await self.gimbal.set_gimbal_angles(0.1, 0.1)
-                await asyncio.sleep(1.5)  # Sleep a little to allow gimbal to move
+                await self.gimbal.set_gimbal_mode(YawMode.YAW_FOLLOW)
+                await self.gimbal.set_gimbal_angles(0.1, 0.1)
                 if drone.is_armed and drone.in_air:
                     # Fly to position
                     # We only try to fly if we are armed an in the air. This is convenient for ground testing.
                     await self.dm.fly_to(self.drone_name, gps=reference_image.gps, yaw=reference_image.drone_att[2])
 
                 # Move gimbal to the relative angle, should match absolute pretty close
-                await self.gimbal.set_gimbal_mode("follow")
-                res = False
-                while not res:
-                    res = await self.gimbal.set_gimbal_angles(reference_image.gimbal_att[1], reference_image.gimbal_att[2])  # Set a non-zero to make sure gimbal responds
-                # Wait for gimbal to have reached position.
-                while abs(self.gimbal.pitch - reference_image.gimbal_att[1]) > 1 or abs(self.gimbal.yaw - reference_image.gimbal_att[2]) > 1:
-                    await asyncio.sleep(0.1)
+                await self.gimbal.set_gimbal_mode(YawMode.YAW_FOLLOW)
+                await self.gimbal.set_gimbal_angles(reference_image.gimbal_att[2], reference_image.gimbal_att[1])  # Set a non-zero to make sure gimbal responds
+                # Little sleep to allow gimbal to settle
+                await asyncio.sleep(1)
+
                 # Wait until camera parameters are set
                 await cam_set_task
 
                 target_gimbal_pitch = reference_image.gimbal_att[1]
-                target_gimbal_yaw = reference_image.gimbal_yaw_absolute
                 if self._gimbal_max_pitch < target_gimbal_pitch < self._gimbal_min_pitch:
                     self.logger.info("Replay exceeding gimbal limit, skipping...")
                     continue
 
-                # Final pointing in lock mode to compensate for drone attitude (commented out for now as the gimbal in
-                # lock mode fails to understand its own movement limit, leading to lock up and preventing my attempted
-                # workaround.)
-                # TODO: Maybe redo this in follow mode, with the target gimbal angle set based on drone attitude?
-                # TODO: Alternatively, try to detect that the gimbal is stuck on a limit and invert drone yaw in those
-                #  scenarios
-                #await self.gimbal.set_gimbal_mode("lock")
-                #res = False
-                #while not res:
-                #    res = await self.gimbal.set_gimbal_angles(target_gimbal_pitch, target_gimbal_yaw)
-                #await asyncio.sleep(3)
-                # Refine position and gimbal attitude based on previous image
-                # TODO: Integrate from other repo, more eval on simulation first
-
+                # TODO: Image based correction from other repo.
                 await self.do_capture(capture)
                 # TODO: Check for replays that didn't work
 
                 # Reset gimbal
-                await self.gimbal.set_gimbal_mode("follow")
-                res = False
-                while not res:
-                    res = await self.gimbal.set_gimbal_angles(0.1, 0.1) # Set a non-zero to make sure gimbal responds
-                await asyncio.sleep(2)  # Short sleep so gimbal has time to physically move.
-                # Do it twice so we are definitely pointed forward.
+                await self.gimbal.set_gimbal_mode(YawMode.YAW_FOLLOW)
+                await self.gimbal.set_gimbal_angles(0.1, 0.1) # Set a non-zero to make sure gimbal responds
             except Exception as e:
                 self.logger.warning(f"Exception with replay for capture {capture.capture_id}")
                 self.logger.debug(repr(e), exc_info=True)
@@ -521,12 +502,18 @@ class ENGELDataMission(Mission):
         self.logger.info(f"Drone {self.drones}. {len(self.captures)} current, {len(self.loaded_captures)} old captures.")
 
     def _register_controller_inputs(self):
-        PS4Mapping.add_method_to_button(3, self._do_capture_controller)  # Do capture on Triangle
-        self._added_controller_buttons[3] = self._do_capture_controller
-        PS4Mapping.add_method_to_button(2, self._swap_gimbal_axis)
-        self._added_controller_buttons[2] = self._swap_gimbal_axis
-        PS4Mapping.add_axis_method(self._get_gimbal_rate, [4, 5])
-        self._added_controller_axis_methods.add(self._get_gimbal_rate)
+        if self.controller.mapping.name == "PS4 Controller":
+            # Do capture on Triangle
+            self.controller.mapping.add_action("Engel.Capture", ActionInputType.Button, self._do_capture_controller, 3)
+            self._added_controller_actions.add("Engel.Capture")
+            # Swap gimbal axis with Square
+            self.controller.mapping.add_action("Engel.SwapGimbalAxis", ActionInputType.Button, self._swap_gimbal_axis, 2)
+            self._added_controller_actions.add("Engel.SwapGimbalAxis")
+            # Control gimbal rates with triggers.
+            self.controller.mapping.add_action("Engel.GimbalRate", ActionInputType.Axis, self._get_gimbal_rate, [4, 5])
+            self._added_controller_actions.add("Engel.GimbalRate")
+        else:
+            self.logger.warning("Engel controller functions do not support this controller!")
 
     async def add_drones(self, names: list[str]):
         """ Adds camera and gimbal objects and stores current position for rtl"""
@@ -536,19 +523,20 @@ class ENGELDataMission(Mission):
         self.logger.info(f"Adding drone {names} to ENGEL!")
         for name in names:
             try:
+                cam_idents = await self.dm.camera.list_potential_cameras(name)
                 gimbal_ok = await self.dm.gimbal.add_gimbals(name)
-                cam_ok = await self.dm.camera.add_camera(name)
+                cam_ok = await self.dm.camera.add_camera(name, cam_idents[0])
                 rtl_pos = self.dm.drones[name].position_global
                 cur_yaw = self.dm.drones[name].attitude[2]
                 if gimbal_ok and cam_ok:
                     self.drones[name] = self.dm.drones[name]
                     self.drone_name = name
-                    self.gimbal = self.dm.gimbal.gimbals[name]
-                    self.camera = self.dm.camera.cameras[name]
+                    self.gimbal = self.dm.gimbal.gimbals[name][0]
+                    self.camera = cam_ok
                     rtl_pos[2] += self.rtl_height
                     self.launch_point = Waypoint(WayPointType.POS_GLOBAL, gps=rtl_pos, yaw=cur_yaw)
                     await self.gimbal.take_control()
-                    await self.gimbal.set_gimbal_mode("follow")  # Gimbal mode follow so it points forward while flying
+                    await self.gimbal.set_gimbal_mode(YawMode.YAW_FOLLOW)  # Gimbal mode follow so it points forward while flying
                     await self.gimbal.set_gimbal_angles(0.1, 0.1)
                     self._gimbal_frequency = self.dm.drones[self.drone_name].position_update_rate
                     self._register_controller_inputs()
@@ -584,8 +572,8 @@ class ENGELDataMission(Mission):
     def _do_capture_controller(self):
         capture_task = asyncio.create_task(self.do_capture())
         capture_awaiter = asyncio.create_task(coroutine_awaiter(capture_task, self.logger))
-        self._running_tasks.add(capture_task)
-        self._running_tasks.add(capture_awaiter)
+        self.running_tasks.add(capture_task)
+        self.running_tasks.add(capture_awaiter)
 
     def _swap_gimbal_axis(self):
         self.logger.info(f"Now controlling gimbal {'Pitch' if self._control_gimbal_pitch else 'Yaw'}")
@@ -600,7 +588,7 @@ class ENGELDataMission(Mission):
         self._gimbal_rate = final_value * self._gimbal_max_rate
 
     def _trigger_response_function(self, value):
-        # Controllers start at -1 and go to +1
+        # Controller triggers start at -1 and go to +1
         value = (value + 1) / 2
         if value < 0.05:
             value = 0
@@ -630,7 +618,3 @@ class ENGELDataMission(Mission):
                 self.logger.warning("Exception setting gimbal rates from controller!")
                 self.logger.debug(repr(e), exc_info = True)
             await asyncio.sleep(1/self._gimbal_frequency)
-
-def _roll_pitch_compensation(gimbal_yaw, drone_roll, drone_pitch):
-    return 0  # Seems like our gimbal might already correct for drone pitch and roll when the gimbal is in locked mode?
-    #return math.sin(gimbal_yaw)*drone_roll + math.cos(gimbal_yaw) * drone_pitch

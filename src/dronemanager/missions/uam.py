@@ -175,7 +175,7 @@ class UAMMission(Mission):
                         # Compute whatever attributes that depend on the number of drones available.
                         self._init_variables()
                     self.drone_tasks.update(new_tasks)
-                    self._running_tasks.update(new_tasks)
+                    self.running_tasks.update(new_tasks)
                     old_stage = self.current_stage
                 await asyncio.sleep(1/self.update_rate)
             except asyncio.CancelledError:

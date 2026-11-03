@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "DroneManager"
-version = "0.6.2"
+version = "0.7.0"
 authors = [
     {name="Dominik Mattern", email="dominik.mattern@thi.de"},
     {name="Konstantin Bake", email="konstantin.bake@thi.de"},
@@ -12,13 +12,13 @@ authors = [
     {name="Tim Drouven", email="tim.drouven@thi.de"}, ]
 description = "Package to connect to and control multiple drones, either programmatically or using a CLI."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "numpy",
+    "lxml",
     "textual==8.2.*",
     "rich",
-    "mavsdk==3.17.*",
-    "pymavlink",
+    "mavsdk>=4",
     "pygame-ce",
     "haversine",
     "scipy",

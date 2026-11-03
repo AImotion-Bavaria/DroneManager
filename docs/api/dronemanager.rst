@@ -23,13 +23,3 @@ Drone module
    :members:
    :undoc-members:
    :show-inheritance:
-
-
-MAVLink connection
-------------------
-
-.. automodule:: dronemanager.mavpassthrough
-   :members:
-   :undoc-members:
-   :show-inheritance:
-

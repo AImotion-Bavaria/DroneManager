@@ -8,8 +8,9 @@ return whatever data the sensor provides.
 Like missions, sensor modules go into their own special folder ``sensors``. Each sensor module can contain exactly one
 specific sensor plugin, which must subclass :py:class:`~dronemanager.plugins.sensor.Sensor` and end with "Sensor"
 
-Note that sensors are not callback based, so data sources that should be processed continuously should not be
-implemented as a sensor."""
+The sensor get_data function may be slow so sources that should be processed continuously should not be
+implemented as a sensor.
+"""
 import abc
 import pathlib
 

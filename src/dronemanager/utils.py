@@ -4,18 +4,18 @@ positions.
 Unless stated otherwise, a GPS coordinate is any indexable sequence with the latitude, longitude and AMSL in that order.
 """
 
-import math
-import pathlib
-from collections.abc import Sequence
-from urllib.parse import urlparse
-import numpy as np
-import logging
-import socket
 import asyncio
+from collections.abc import Sequence, MutableSet
+from concurrent.futures import Future
 from haversine import inverse_haversine, haversine, Direction, Unit
-
-from platformdirs import user_documents_path
 from importlib.resources import files
+import logging
+import math
+import numpy as np
+import pathlib
+from platformdirs import user_documents_path
+import socket
+from urllib.parse import urlparse
 
 COMMON_FORMATTER = logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)s %(name)s - %(message)s', datefmt="%H:%M:%S")
 """The common formatter string for the loggers.
@@ -242,7 +242,7 @@ def parse_address(string: str) -> tuple[str, str, int]:
     Also used to ensure that udp://:14540, udp://localhost:14540 and udp://127.0.0.1:14540 are recognized as equivalent.
 
     Missing elements from the string or the other entries are replaced with defaults.
-    These are "udp", an empty host "", and 50051 for the scheme, host and appendix, respectively.
+    These are "udp", the loopback IP "127.0.0.1", and 14550 for the scheme, host and appendix, respectively.
 
     Args:
         string: A connection string.
@@ -260,14 +260,15 @@ def parse_address(string: str) -> tuple[str, str, int]:
         append = parse_drone_addr.port
         if scheme is None:
             scheme = "udp"
-        if loc is None:
-            loc = ""
-        if loc == "localhost":
-            loc = ""
-        elif loc == "127.0.0.1":
-            loc = ""
+        if scheme == "udp":
+            if loc is None:
+                loc = "127.0.0.1"
+            elif loc == "localhost":
+                loc = "127.0.0.1"
+            elif loc == "":
+                loc = "127.0.0.1"
         if append is None:
-            append = 50051
+            append = 14550
     return scheme, loc, append
 
 
@@ -290,8 +291,22 @@ async def coroutine_awaiter(task: asyncio.Future, logger: logging.Logger):
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        logger.error(f"Encountered an exception in a coroutine! See the log for more details")
-        logger.debug(e, exc_info=True)
+        logger.error(f"Encountered an exception in a coroutine: {repr(e)}! See the log for more details")
+        logger.debug(repr(e), exc_info=True)
+
+
+def cancel_running_tasks(running_tasks: MutableSet[asyncio.Future | Future]):
+    """Cancel all tasks in a collection of tasks.
+
+    This is a common pattern in DroneManager, which is why the functionality is bundled here.
+
+    Args:
+        running_tasks: A set of tasks to be cancelled.
+    """
+    while len(running_tasks) > 0:
+        task = running_tasks.pop()
+        if isinstance(task, asyncio.Future) or isinstance(task, Future):
+            task.cancel()
 
 # The first haversine/ inverse_haversine calls are slow, because of numba stuff, so do it here
 dist_gps([10, 20, 300], [20, 10, 400])
