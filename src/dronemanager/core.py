@@ -230,7 +230,7 @@ class DroneManager:
     async def connect_drone(self, name: str, comm_protocol: str | None = None, conn: str | None = None,
                             timeout: float = 30, telemetry_frequency: float | None = None,
                             log_telemetry: bool | None = None):
-        self.logger.info(f"Adding connect procedure for {name}...")
+        self.logger.info(f"Queuing connect procedure for {name}...")
         # All the config stuff
         drone_config = copy.deepcopy(self.drone_configs["default"])
         specific_config: DroneConfig = self.drone_configs[name]
