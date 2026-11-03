@@ -182,8 +182,8 @@ class UDPPlugin(Plugin):
         if hasattr(self.dm, "mission"):  # Check that the mission plugin is actually loaded
             mission_data = {}
             data["missions"] = mission_data
-            for mission_name in self.dm.mission.missions:
-                mission = self.dm.mission.missions[mission_name]
+            for mission_name in self.dm.mission.loaded:
+                mission = getattr(self.dm, mission_name)
                 mission_data[mission.PREFIX] = {
                     "flightarea": mission.flight_area.bounding_box() if mission.flight_area is not None else None,
                     "stage": mission.current_stage.name if mission.current_stage is not None else None,
