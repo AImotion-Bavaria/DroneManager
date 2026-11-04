@@ -641,6 +641,8 @@ class Controller:
         self.control_mode: FlightMode = FlightMode.POSCTL
         #: A dictionary with buttons being currently pressed and when they were first pressed.
         self.held_buttons: dict[int, float] = {}
+        self.action_cooldowns: dict[Action, float] = {}
+        # TODO: Implement in a more robust way
         self.log_input_ids = False
 
     @property
@@ -1217,6 +1219,7 @@ class ControllerPlugin(Plugin):
                 if not ((hold_action and released and time_held > controller.input_mapping.hold_duration)
                     or (not hold_action and not released)):
                     continue
+                # TODO: Check that the action is not on cooldown
                 action_coro = None
                 action_coro_args = {}
                 if action.label == "Control":
@@ -1290,7 +1293,7 @@ class ControllerPlugin(Plugin):
             self.logger.warning(f"Can't take control, assigned drone {controller.drone} is disconnected!")
         else:
             if controller.control_mode is FlightMode.POSCTL:
-                await self.dm.drones[controller.drone].change_flight_mode(FlightMode.POSCTL)
+                await self.dm.change_flightmode(controller.drone, FlightMode.POSCTL)
             else:
                 raise NotImplementedError
             self.logger.info(f"Controller {controller_id} took control of {controller.drone}")
@@ -1304,7 +1307,7 @@ class ControllerPlugin(Plugin):
         """
         controller = self.controllers[controller_id]
         controller.in_control = False
-        await self.dm.change_flightmode(controller.drone, "hold")
+        await self.dm.change_flightmode(controller.drone, FlightMode.HOLD)
         self.logger.info(f"Controller {controller_id} released control of {controller.drone}.")
 
     async def _drone_disconnected_callback(self, name: str):

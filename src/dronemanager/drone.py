@@ -224,7 +224,7 @@ class Drone(ABC, Generic[CommType]):
     # Drones which are discovered but not in use have an empty name "".
     # Even when not in use, they have a connection state through is_connected.
 
-    VALID_FLIGHTMODES = set()
+    VALID_FLIGHTMODES: set[FlightMode] = set()
     VALID_SETPOINT_TYPES = set()
 
     def __init__(self, comm_protocol: CommType, identifier, *args, **kwargs):
@@ -484,7 +484,7 @@ class Drone(ABC, Generic[CommType]):
         pass
 
     @abstractmethod
-    async def change_flight_mode(self, flightmode) -> bool:
+    async def change_flight_mode(self, flightmode: FlightMode) -> bool:
         pass
 
     def is_at_waypoint(self, waypoint: Waypoint, pos_tolerance=0.25, vel_tolerance=0.1, yaw_tolerance=1) -> bool:

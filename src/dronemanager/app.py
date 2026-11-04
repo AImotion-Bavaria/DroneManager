@@ -14,7 +14,7 @@ import typing
 
 import dronemanager
 from dronemanager.core import DroneManager
-from dronemanager.drone import Drone
+from dronemanager.drone import Drone, FlightMode
 from dronemanager.utils import COMMON_FORMATTER, coroutine_awaiter, LOG_DIR, get_config, cancel_running_tasks
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 
@@ -438,48 +438,6 @@ class CommandScreen(Screen):
 
         return parser, command_parsers
 
-<<<<<<< HEAD
-=======
-    async def _load_plugin_commands(self, plugin_name, plugin):
-        try:
-            self.logger.debug(f"Loading CLI commands for plugin {plugin_name}")
-            commands = plugin.cli_commands
-            for command_name in commands:
-                command = commands[command_name]
-                cli_command = f"{plugin.PREFIX}-{command_name}".lower()
-                self.logger.debug(f"Inspecting command {command_name}")
-                add_cli_command_parser(self.command_parser, cli_command, command, logger=self.logger)
-                self.dynamic_commands[cli_command] = command
-            return True
-        except Exception as e:
-            self.logger.warning("Failed to load CLI commands for the plugin!")
-            self.logger.debug(repr(e), exc_info=True)
-            return e
-
-    async def _unload_plugin_commands(self, plugin_name, plugin):
-        # TODO: ALL OF IT
-        # TODO: Apparently there isn't a great way to get rid of arguments in argparse, might have to delete the parser
-        #  and generate a new one (which should be possible due to plugin list)
-        pass
-
-    async def _add_drone_object(self, name, drone):
-        status_field = self.query_one("#status", expect_type=VerticalScroll)
-        self.logger.debug(f"Adding log pane handlers to {name}")
-        drone_handler = self.textual_log_handler
-        drone.add_handler(drone_handler)
-        self.logger.debug(f"Adding overview widget for {name}")
-        drone_status_widget = DroneOverview(drone, UPDATE_RATE, self.logger)
-        self.drone_widgets[name] = drone_status_widget
-        await status_field.mount(drone_status_widget)
-
-    async def _remove_drone_object(self, name):
-        try:
-            await self.drone_widgets[name].remove()
-            self.drone_widgets.pop(name)
-        except KeyError:
-            pass
-
->>>>>>> 44e1ea1 (Fixed multiple issues with Optitrack plugin)
     @on(InputWithHistory.Submitted, "#cli")
     async def cli(self, message):
         value = message.value
@@ -556,7 +514,24 @@ class CommandScreen(Screen):
                 elif command == "takeoff":
                     tmp = asyncio.create_task(self.dm.takeoff(args.drones, altitude=args.altitude, schedule=args.schedule))
                 elif command == "mode":
-                    tmp = asyncio.create_task(self.dm.change_flightmode(args.drones, args.mode))
+                    flightmode = args.mode
+                    if flightmode == "hold":
+                        target_flight_mode = FlightMode.HOLD
+                    elif flightmode == "offboard":
+                        target_flight_mode = FlightMode.OFFBOARD
+                    elif flightmode == "return":
+                        target_flight_mode = FlightMode.RETURN_TO_LAUNCH
+                    elif flightmode == "land":
+                        target_flight_mode = FlightMode.LAND
+                    elif flightmode == "takeoff":
+                        target_flight_mode = FlightMode.TAKEOFF
+                    elif flightmode == "position":
+                        target_flight_mode = FlightMode.POSCTL
+                    elif flightmode == "altitude":
+                        target_flight_mode = FlightMode.ALTCTL
+                    else:
+                        raise NotImplementedError(f"{flightmode} is not a currently supported!")
+                    tmp = asyncio.create_task(self.dm.change_flightmode(args.drones, target_flight_mode))
                 elif command == "fence":
                     fence = RectLocalFence(args.nl, args.nu, args.el, args.eu, args.dl, args.du, safety_level=args.safety)
                     self.dm.set_fence(args.drones, fence)
@@ -706,12 +681,8 @@ class CommandScreen(Screen):
     def _on_mount(self, event: events.Mount) -> None:
         super()._on_mount(event)
         self.query_one("#output", expect_type=Log).can_focus = False
-<<<<<<< HEAD
         self.set_interval(1 / UPDATE_RATE, self._drain_textual_logs)
         self.dm.start()
-=======
-        self.set_interval(1/UPDATE_RATE, self._drain_textual_logs)
->>>>>>> 44e1ea1 (Fixed multiple issues with Optitrack plugin)
 
     def _drain_textual_logs(self):
         if self.textual_log_handler is not None:

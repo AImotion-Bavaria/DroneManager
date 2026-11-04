@@ -164,7 +164,15 @@ class MAVSDKComm(DroneComProtocol):
 
 class MAVSDKDrone(Drone[MAVSDKComm]):
 
-    VALID_FLIGHTMODES = {"hold", "offboard", "return", "land", "takeoff", "position", "altitude"}
+    VALID_FLIGHTMODES = {
+        FlightMode.HOLD,
+        FlightMode.OFFBOARD,
+        FlightMode.RETURN_TO_LAUNCH,
+        FlightMode.LAND,
+        FlightMode.TAKEOFF,
+        FlightMode.POSCTL,
+        FlightMode.ALTCTL
+    }
     # This attribute is for checking which flight modes can be changed into manually
     VALID_SETPOINT_TYPES = {WayPointType.POS_NED,
                             WayPointType.POS_VEL_NED,
@@ -660,7 +668,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         :return:
         """
         if not allow_in_air and self.in_air:
-            self.logger.debug("Can't takeoff again, already in the air!")
+            self.logger.info("Can't takeoff again, already in the air!")
             return False
         if self.path_follower.is_active:
             await self.path_follower.deactivate()
@@ -710,7 +718,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         target_pos_yaw[2] = target_pos_yaw[2] - altitude
         await self.set_setpoint(Waypoint(WayPointType.POS_NED, pos=target_pos_yaw[:3], yaw=target_pos_yaw[3]))
         if self._flightmode != FlightMode.OFFBOARD:
-            await self.change_flight_mode("offboard")
+            await self.change_flight_mode(FlightMode.OFFBOARD)
         self.logger.info(f"Taking off to {target_pos_yaw[2]} in local coordinates!")
         while True:
             if self.is_at_pos(target_pos_yaw, tolerance=tolerance):
@@ -718,38 +726,33 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                 return True
             await asyncio.sleep(1 / self.position_update_rate)
 
-    async def change_flight_mode(self, flightmode: str, timeout: float = 5):
-        self.logger.info(f"Changing flight mode to {flightmode}")
+    async def change_flight_mode(self, flightmode: FlightMode, timeout: float = 5):
+        assert flightmode in self.VALID_FLIGHTMODES,\
+            f"FlightMode {flightmode.name} is not available for drone {self.name}!"
+        self.logger.info(f"Changing flight mode to {flightmode.name}")
         await super().change_flight_mode(flightmode)
         start_time = time.time()
-        if flightmode == "hold":
+        if flightmode == FlightMode.HOLD:
             result = await self._error_wrapper(self.mavaction.hold, ActionError)
-            target_flight_mode = FlightMode.HOLD
-        elif flightmode == "offboard":
+        elif flightmode == FlightMode.OFFBOARD:
             result = await self._error_wrapper(self.mavoffboard.start, OffboardError)
-            target_flight_mode = FlightMode.OFFBOARD
-        elif flightmode == "return":
+        elif flightmode == FlightMode.RETURN_TO_LAUNCH:
             result = await self._error_wrapper(self.mavaction.return_to_launch, ActionError)
-            target_flight_mode = FlightMode.RETURN_TO_LAUNCH
-        elif flightmode == "land":
+        elif flightmode == FlightMode.LAND:
             result = await self._error_wrapper(self.mavaction.land, ActionError)
-            target_flight_mode = FlightMode.LAND
-        elif flightmode == "takeoff":
+        elif flightmode == FlightMode.TAKEOFF:
             self._can_takeoff()
             result = await self._error_wrapper(self.mavaction.takeoff, ActionError)
-            target_flight_mode = FlightMode.TAKEOFF
-        elif flightmode == "position":
+        elif flightmode == FlightMode.POSCTL:
             self.clear_queue()
             self.cancel_action()
             await self.path_follower.deactivate()
             result = await self._error_wrapper(self.mavmanual.start_position_control, ManualControlError)
-            target_flight_mode = FlightMode.POSCTL
-        elif flightmode == "altitude":
+        elif flightmode == FlightMode.ALTCTL:
             self.clear_queue()
             self.cancel_action()
             await self.path_follower.deactivate()
             result = await self._error_wrapper(self.mavmanual.start_altitude_control, ManualControlError)
-            target_flight_mode = FlightMode.ALTCTL
         else:
             raise KeyError(f"{flightmode} is not a valid flightmode!")
         if not result:
@@ -759,9 +762,9 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             self.logger.warning("Flightmode change denied!")
             return False
         else:
-            while self.flightmode != target_flight_mode and time.time() < start_time + timeout:
+            while self.flightmode != flightmode and time.time() < start_time + timeout:
                 await asyncio.sleep(1/self.position_update_rate)
-            if self.flightmode != target_flight_mode:
+            if self.flightmode != flightmode:
                 self.logger.warning("Drone accepted command, but flight mode change timed out! "
                                     "Possible connection issue.")
                 return False
@@ -935,7 +938,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                 cur_pos = self.position_ned
                 cur_yaw = self.attitude[2]
                 await self.set_setpoint(Waypoint(WayPointType.POS_NED, pos=cur_pos, yaw=cur_yaw))
-            await self.change_flight_mode("offboard")
+            await self.change_flight_mode(FlightMode.OFFBOARD)
 
         # Check that both path generator and follower can handle GPS coordinates
         if use_gps:
@@ -1001,7 +1004,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         target_pos = self._get_pos_ned_yaw()
         if self._flightmode != FlightMode.OFFBOARD:
             await self.set_setpoint(Waypoint(WayPointType.POS_VEL_NED, pos=target_pos[:3], yaw=target_pos[3]))
-            await self.change_flight_mode("offboard")
+            await self.change_flight_mode(FlightMode.OFFBOARD)
         update_freq = 2
         try:
             await self.mavtelem.set_rate_position_velocity_ned(self.position_update_rate)
@@ -1030,7 +1033,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         while self.in_air:
             await asyncio.sleep(1 / self.position_update_rate)
         self.logger.info("Landed!")
-        await self.change_flight_mode("hold")
+        await self.change_flight_mode(FlightMode.HOLD)
         return True
 
     async def set_manual_control_input(self, x, y, z, r):

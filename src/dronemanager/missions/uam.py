@@ -6,6 +6,7 @@ import time
 
 import numpy as np
 
+from dronemanager.drone import FlightMode
 from dronemanager.plugins.mission import Mission, MissionStage, FlightArea
 from dronemanager.utils import dist_ned
 from dronemanager.navigation.core import Waypoint, WayPointType
@@ -566,7 +567,7 @@ class UAMMission(Mission):
         except KeyError:
             pass
         await asyncio.sleep(0.5) # Wait a couple of beats
-        await self.dm.change_flightmode(drone, "position")
+        await self.dm.change_flightmode(drone, FlightMode.POSCTL)
 
     def _yaw_to_point(self, drone, position):
         dx = position[0] - self.dm.drones[drone].position_ned[0]

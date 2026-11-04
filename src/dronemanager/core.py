@@ -14,7 +14,7 @@ from typing import Callable
 import dronemanager
 import dronemanager.drone
 from dronemanager.comm_protocols.mav import MAVSDKComm
-from dronemanager.drone import Drone, DroneComProtocol, DroneConfigs, DroneConfig
+from dronemanager.drone import Drone, DroneComProtocol, DroneConfigs, DroneConfig, FlightMode
 from dronemanager.navigation.core import Waypoint, Fence
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 from dronemanager.plugin import PluginLoader
@@ -417,10 +417,10 @@ class DroneManager:
         return await self._multiple_drone_action("takeoff", names,
                                                  "Takeoff for Drone(s) {}.", altitude, schedule=schedule, allow_in_air=allow_in_air)
 
-    async def change_flightmode(self, names: str | Collection[str], flightmode: str, schedule=False):
+    async def change_flightmode(self, names: str | Collection[str], flightmode: FlightMode, schedule=False):
         await self._multiple_drone_action("change_flight_mode",
                                           names,
-                                          "Changing flightmode for drone(s) {} to " + flightmode + ".",
+                                          "Changing flightmode for drone(s) {} to " + flightmode.name + ".",
                                           flightmode, schedule=schedule)
 
     async def land(self, names: str | Collection[str], schedule=False):
