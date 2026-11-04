@@ -392,7 +392,7 @@ class MockEventQueue:
 
 
 async def test_plugin(dm_with_controller: tuple[DroneManager, Mock],
-                      mock_drone_getter: Callable[[int], Mock],
+                      mock_drone_getter,
                       ps4_mapping: InputMapping):
     """Big ugly test function for most parts of the plugin class.
 
@@ -579,7 +579,7 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock],
 
 
 async def test_multiple_controllers(dm_with_controller: tuple[DroneManager, Mock],
-                                    mock_drone_getter: Callable[[int], Mock],
+                                    mock_drone_getter,
                                     ps4_mapping: InputMapping):
     """Testing multiple drones with multiple controllers.
 

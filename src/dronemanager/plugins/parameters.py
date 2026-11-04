@@ -72,7 +72,7 @@ import numpy as np
 
 import dronemanager
 import dronemanager.core
-from dronemanager.drone import DroneMAVSDK
+#from dronemanager.drone import DroneMAVSDK
 from dronemanager.plugin import Plugin, DOC_DIR
 from dronemanager.utils import parse_address
 

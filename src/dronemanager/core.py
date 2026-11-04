@@ -52,7 +52,7 @@ class DMConfig:
         self.default_plugins = default_plugins
         if default_comm_protocols is None:
             default_comm_protocols = []
-        self.default_protocols = default_comm_protocols
+        self.default_comm_protocols = default_comm_protocols
         if plugin_settings is None:
             plugin_settings = {}
         self.plugin_settings: dict[str, dict[str, typing.Any]] = plugin_settings
@@ -151,17 +151,23 @@ class DroneManager:
 
     async def _load_default_plugins(self):
         plugin_tasks = []
+        loaded = []
         for plugin_name in self.config.default_plugins:
-            plugin_tasks.append(asyncio.create_task(self.load(plugin_name)))
+            if plugin_name not in self.plugins:
+                plugin_tasks.append(asyncio.create_task(self.load(plugin_name)))
+                loaded.append(plugin_name)
         await asyncio.gather(*plugin_tasks)
-        self.logger.info(f"Loaded startup plugins: {self.plugins}")
+        self.logger.info(f"Loaded startup plugins: {loaded}")
 
     async def _load_default_comm_protocols(self):
         protocol_tasks = []
-        for protocol_name in self.config.default_protocols:
-            protocol_tasks.append(asyncio.create_task(self.add_comm_protocol(protocol_name)))
+        loaded = []
+        for protocol_name in self.config.default_comm_protocols:
+            if protocol_name not in self.comm_protocols:
+                protocol_tasks.append(asyncio.create_task(self.add_comm_protocol(protocol_name)))
+                loaded.append(protocol_name)
         await asyncio.gather(*protocol_tasks)
-        self.logger.info(f"Loaded default comm protocols: {self.comm_protocols}")
+        self.logger.info(f"Loaded default comm protocols: {loaded}")
 
     async def add_comm_protocol(self, name):
         # TODO: Comm discovery? Make them plugins?
@@ -242,9 +248,9 @@ class DroneManager:
                 setattr(drone_config, key, value)
         # If a protocol is supplied, prefer that, otherwise use the one from the config (including default)
         if comm_protocol is not None:
-            drone_config.protocol = comm_protocol
+            drone_config.comm_protocol = comm_protocol
         else:
-            comm_protocol = drone_config.protocol
+            comm_protocol = drone_config.comm_protocol
         # If a connection is supplied, prefer that, otherwise use the one from config (including default)
         if conn is not None:
             drone_config.connection = conn

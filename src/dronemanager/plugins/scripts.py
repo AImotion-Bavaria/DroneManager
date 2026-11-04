@@ -7,6 +7,7 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 import logging
 import pathlib
+import platform
 import subprocess
 from subprocess import CompletedProcess, CalledProcessError
 
@@ -114,7 +115,11 @@ def _script_function(script_path: str, script_args: list[str]) -> CompletedProce
     Returns:
         The process result.
     """
-    input_args = ["python3", script_path]
+    if platform.system() == "Windows":
+        exec_str = "python"
+    else:
+        exec_str = "python3"
+    input_args = [exec_str, script_path]
     input_args.extend(script_args)
     result = subprocess.run(input_args, capture_output=True, text=True, check=True)
     return result

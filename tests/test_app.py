@@ -1,7 +1,8 @@
 """Module to test the terminal interface."""
+import asyncio
+
 from dronemanager.app import DroneApp
 from dronemanager.core import DroneManager
-from dronemanager.drone import DroneMAVSDK, Battery
 
 
 def test_smoke(dm: DroneManager):
@@ -14,18 +15,16 @@ def test_smoke(dm: DroneManager):
     app.run(headless=True)
 
 
-async def test_control_screen(dm: DroneManager):
+async def test_control_screen(dm: DroneManager, mock_drone_getter):
     """Test the CLI and key commands.
 
     Args:
         dm: DroneManager instance.
     """
     app = DroneApp(dm, logger=dm.logger, smoke_test=False)
+    mock_drone = mock_drone_getter(1)
 
-    drone = DroneMAVSDK("tom")
-    drone._batteries[0] = Battery()
-    drone._batteries[0].remaining = 90
-    dm.drones["tom"] = drone
+    dm.drones["mock_1"] = mock_drone
 
     async with app.run_test(size=(120, 40)) as pilot:
         # The app has mounted and is running here.
@@ -45,16 +44,16 @@ async def test_control_screen(dm: DroneManager):
 
         # Test drone widget
         assert screen is not None
-        assert "tom" not in screen.drone_widgets
-        await screen._add_drone_object("tom", drone)
+        assert "mock_1" not in screen.drone_widgets
+        await screen._add_drone_object("mock_1", mock_drone)
         await pilot.pause()
-        assert "tom" in screen.drone_widgets
-        widget = screen.drone_widgets["tom"]
+        assert "mock_1" in screen.drone_widgets
+        widget = screen.drone_widgets["mock_1"]
         assert widget.is_attached
         await pilot.pause()
-        await screen._remove_drone_object("tom")
-        await pilot.pause()
-        assert "tom" not in screen.drone_widgets
+        await screen._remove_drone_object("mock_1")
+        await pilot.pause(1)
+        assert "mock_1" not in screen.drone_widgets
 
         # Test CLI
         cli = screen.query_one("#cli")
@@ -63,14 +62,14 @@ async def test_control_screen(dm: DroneManager):
         await enter_command("mission-load engel")
         await pilot.pause()
         await enter_command("fake-command which does not exist")
-        drone._batteries[0].remaining = 50
+        mock_drone.batteries[0].remaining = 50
         await pilot.pause()
         await enter_command("connect")
         await pilot.pause()
-        await enter_command("move tom 10 3 5 --fake-argument")
+        await enter_command("move mock_1 10 3 5 --fake-argument")
         await pilot.pause()
-        await enter_command("move tom shf seh sfhjd")
-        drone._batteries[0].remaining = 20
+        await enter_command("move mock_1 shf seh sfhjd")
+        mock_drone.batteries[0].remaining = 20
         await pilot.pause()
         await pilot.press("up")
         await pilot.pause()
@@ -81,6 +80,11 @@ async def test_control_screen(dm: DroneManager):
         await pilot.press("enter")
         await pilot.pause()
         await enter_command("--help")
+        await pilot.pause()
+
+        # mockdrone disarmed and on the ground
+        mock_drone.is_armed = False
+        mock_drone.in_air = False
         await pilot.pause()
 
         # Exit

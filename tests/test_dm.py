@@ -82,8 +82,8 @@ def test_parse_address():
     scheme, adr, loc = parse_address("udp://192.168.0.10:14540")
     assert scheme == "udp" and adr == "192.168.0.10" and loc == 14540
     scheme, adr, loc = parse_address("udp://:14540")
-    assert scheme == "udp" and adr == "" and loc == 14540
+    assert scheme == "udp" and adr == "127.0.0.1" and loc == 14540
     scheme, adr, loc = parse_address("udp://127.0.0.1:14540")
-    assert scheme == "udp" and adr == "" and loc == 14540
+    assert scheme == "udp" and adr == "127.0.0.1" and loc == 14540
     scheme, adr, loc = parse_address("serial://COM5:57600")
     assert scheme == "serial" and adr == "COM5" and loc == 57600

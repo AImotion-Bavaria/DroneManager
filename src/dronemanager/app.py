@@ -271,7 +271,10 @@ class CommandScreen(Screen):
 
         self._awaiter_tasks = set()
 
-        asyncio.create_task(self.dm.start())
+        start_task = asyncio.create_task(self.dm.start())
+        start_awaiter_task = asyncio.create_task(coroutine_awaiter(start_task, self.logger))
+        self.app.running_tasks.add(start_task)
+        self.app.running_tasks.add(start_awaiter_task)
 
     def _base_parser(self):
         parser = ArgParser(logger = self.logger, description="Interactive command line interface to connect and control multiple drones")
@@ -626,7 +629,9 @@ class CommandScreen(Screen):
 
     async def _remove_drone_object(self, name):
         try:
-            await self.drone_widgets[name].remove()
+            widget = self.drone_widgets.pop(name)
+            await widget.remove()
+            self.dm.drones[name].remove_handler(self.textual_log_handler)
         except KeyError:
             pass
 
@@ -921,6 +926,8 @@ def add_cli_command_parser(command_parsers: argparse._SubParsersAction, cli_comm
         arg_name = name if is_required else f"--{name}"
         arg_help = arg_helps.get(name, "")
         arg_kwargs = {}
+        if not isinstance(base_type, type):
+            base_type = type(base_type)
         if base_type is bool and not is_list and has_default and default is False:
             arg_kwargs["action"] = "store_true"
         else:

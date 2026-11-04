@@ -142,7 +142,7 @@ class DroneConfig:
                  max_yaw_acc: float = 30, max_yaw_jerk: float = 30, size: float = 1.0, rtsp: str | None = None, **kwargs):
         self.drone_name = drone_name
         self.drone_identifier = drone_identifier
-        self.protocol = comm_protocol
+        self.comm_protocol = comm_protocol
         self.connection = connection
         self.position_rate = position_rate
         self.max_h_vel = max_h_vel
@@ -336,6 +336,11 @@ class Drone(ABC, Generic[CommType]):
     def add_handler(self, handler):
         self.logger.addHandler(handler)
         self.logging_handlers.append(handler)
+
+    def remove_handler(self, handler):
+        if handler in self.logging_handlers:
+            self.logging_handlers.remove(handler)
+            self.logger.removeHandler(handler)
 
     def add_telemetry_handler(self, handler):
         self.telem_logger.addHandler(handler)

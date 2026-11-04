@@ -9,10 +9,9 @@ from typing import AsyncGenerator, Any, Callable
 from unittest.mock import Mock, AsyncMock
 
 import cv2
-from mavsdk import System
 
 from dronemanager.core import DroneManager
-from dronemanager.drone import DroneMAVSDK, DroneConfig, FlightMode, DroneParams
+from dronemanager.drone import Battery, Drone, DroneConfig, FlightMode, DroneParams
 from dronemanager.navigation.core import PathGenerator, PathFollower, Waypoint, WayPointType
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 
@@ -27,8 +26,8 @@ async def dm() -> AsyncGenerator[DroneManager, Any]:
     Yields:
         A DroneManager instance.
     """
-    drone_type = DroneMAVSDK
-    dm = DroneManager(drone_type, log_to_console=False)
+    dm = DroneManager(log_to_console=False)
+    await dm.start()
     yield dm
     await dm.close()
 
@@ -118,21 +117,19 @@ def mock_drone_getter() -> Callable[[int], Mock]:
         """
         name = f"mock_{count}"
         # Core mocks
-        mockdrone = Mock(spec=DroneMAVSDK)
-        mockdrone.disconnect = AsyncMock()
-        mockdrone.stop_execution = AsyncMock()
-        mockdrone.system = Mock(spec=System)
+        mockdrone = Mock(spec=Drone)
+        mockdrone.shutdown = AsyncMock()
         mockdrone.name = name
 
-        # Optitrack mocks
-        mockdrone.send_external_tracking_data = AsyncMock()
-        mockdrone.system.mocap.set_vision_position_estimate = AsyncMock()
+        mockdrone.batteries = []
+        mockdrone.batteries.append(Battery())
+        mockdrone.batteries[0].remaining = 90
 
         # Drone property mocks
         mockdrone.path_generator = Mock(spec=PathGenerator)
         mockdrone.path_generator.target_position = Waypoint(WayPointType.POS_NED, pos=[2, 3, -6], yaw=90)
         mockdrone.path_follower = Mock(spec=PathFollower)
-        mockdrone.config = DroneConfig(name, address="dummy_address")
+        mockdrone.config = DroneConfig(name, drone_identifier=str(count), comm_protocol="mav", connection="dummy_address")
         mockdrone.position_ned = np.asarray([1, 1, -2], dtype=np.float64)
         mockdrone.position_global = np.asarray([-1, -1, 300], dtype=np.float64)
         mockdrone.velocity = np.asarray([0.1, 0.2, 0.3], dtype=np.float64)
@@ -151,10 +148,6 @@ def mock_drone_getter() -> Callable[[int], Mock]:
         # Function mocks
         mockdrone.arm = AsyncMock()
 
-        def flight_mode_change_posctrl():
-            """Mock function which changes the flight mode posctrl."""
-            mockdrone.flightmode = FlightMode.POSCTL
-
         def change_flight_mode_side_effect(flightmode: FlightMode):
             """Mock flight mode chaning function.
 
@@ -163,10 +156,14 @@ def mock_drone_getter() -> Callable[[int], Mock]:
             """
             mockdrone.flightmode = flightmode
 
-        mockdrone.manual_control_position.side_effect = flight_mode_change_posctrl
-        mockdrone.set_manual_control_input = AsyncMock()
         mockdrone.execute_task = AsyncMock()
         mockdrone.change_flight_mode.side_effect = change_flight_mode_side_effect
+
+        # Manual Control Mock
+        mockdrone.set_manual_control_input = AsyncMock()
+
+        # Optitrack mocks
+        mockdrone.send_external_tracking_data = AsyncMock()
 
         return mockdrone
     return _mock_drone_creator
