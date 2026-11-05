@@ -34,6 +34,9 @@ DEFAULT_FREQUENCY: float = 50
 DEFAULT_HOLD_DURATION: float = 2
 """Default duration for which a button must be pressed continuously to count as a "long press"."""
 
+SUPPORTS_STRING: str = "manual"
+"""Entry in the :py:class:`~dronemanager.drone.DroneComProtocol` SUPPORTS dictionary for this plugin."""
+
 
 class ActionInputType(enum.Enum):
     """Possible input types for actions."""
@@ -487,12 +490,12 @@ class InputMapping:
                 if action.func is not None:
                     self._axis_actions_by_function.pop(action.func)
 
-    def bind_action(self, action_name: str, input_id: int | list[int | None]):
+    def bind_action(self, action_name: str, input_id: int | None | list[int | None]):
         """Add or change the control bindings of an existing action.
 
-        Core actions are protected from being changed. Button actions must receive a single integer. Axes actions must
-        receive a list of input ids, which may only have a single entry and contain ``None``. Axes actions are not
-        executed if they are partially bound.
+        Core actions are protected from being changed. Button actions must receive a single integer or None. Axes
+        actions must receive a list of input ids, which may only have a single entry and contain ``None``. Axes actions
+        are not executed if they are partially bound.
 
         Args:
             action_name: The name of the action.
@@ -691,17 +694,15 @@ class ControllerPlugin(Plugin):
 
     def __init__(self, dm, logger, name, auto_assign=False, event_frequency: float = DEFAULT_FREQUENCY,
                  control_frequency: float = DEFAULT_FREQUENCY, default_mappings: dict[str, str] = None, **kwargs):
-        """
-
-        Args:
-            dm:
-            logger:
-            name:
-            auto_assign:
-            event_frequency:
-            control_frequency:
-            default_mappings:
-            **kwargs:
+        """Args:
+        dm:
+        logger:
+        name:
+        auto_assign:
+        event_frequency:
+        control_frequency:
+        default_mappings:
+        **kwargs:
         """
         super().__init__(dm, logger, name)
         self.background_functions = [
@@ -891,8 +892,8 @@ class ControllerPlugin(Plugin):
             self.logger.warning(f"No drone named {drone}")
             can_assign_drone = False
         # Check that the drone with that name supports manual control
-        if "manual" not in self.dm.drones[drone].comm.SUPPORTS:
-            self.logger.warning(f"Drone {drone} comm protocol {self.dm.drones[drone].comm.name} does not support "
+        if SUPPORTS_STRING not in self.dm.drones[drone].comm.SUPPORTS:
+            self.logger.warning(f"Drone {drone} comm protocol {self.dm.drones[drone].comm.NAME} does not support "
                                 f"manual control!")
             can_assign_drone = False
         # Check that the drone is assignable: Either not assigned, or assigned but not controlled by a different
@@ -1227,9 +1228,9 @@ class ControllerPlugin(Plugin):
                         self.logger.info(f"Trying to toggling manual control for drone {controller.drone} ...")
                         action_coro_args = {"controller_id": controller.id}
                         if controller.in_control:
-                            action_coro= self._release_control
+                            action_coro = self._release_control
                         else:
-                            action_coro= self._take_control
+                            action_coro = self._take_control
                         toggle_control = True
                     else:
                         self.logger.info(f"Can't take control, not assigned to any drone!")

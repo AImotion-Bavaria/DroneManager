@@ -23,7 +23,7 @@ from dronemanager.utils import DOC_DIR, SRC_DIR, cancel_running_tasks
 # TODO: Figure out how to do help strings for plugins, choices, store_true, etc... general CLI information.
 
 class Plugin(abc.ABC):
-    """ Generic plugin class.
+    """Generic plugin class.
 
     The attribute :py:attr:`cli_commands` is called by the DroneManager CLI (and could be called by other UIs) to
     populate their interfaces. This is a dictionary with coroutines as values and human-readable names as keys. In
@@ -52,14 +52,12 @@ class Plugin(abc.ABC):
     """(class attribute) Other plugins that this plugin depends on."""
 
     def __init__(self, dm: "dronemanager.core.DroneManager", logger: logging.Logger, name: str, *args, make_child_logger: bool = True, **kwargs):
-        """
-
-        Args:
-            dm:
-            logger:
-            name:
-            *args:
-            **kwargs:
+        """Args:
+        dm:
+        logger:
+        name:
+        *args:
+        **kwargs:
         """
         self.dm: "dronemanager.core.DroneManager" = dm
         """The DroneManager instance connected to this plugin."""
@@ -142,7 +140,7 @@ class MetaPlugin(Plugin, abc.ABC):
         #    self.logger.debug(f"Moving examples from {self.EXAMPLE_DIR} to {self.USER_DIR}")
         #    shutil.copytree(self.EXAMPLE_DIR, self.USER_DIR)
         # If we have a user dir, but no example dir, just create it.
-        if self.USER_DIR is not None:
+        if self.USER_DIR is not None and not pathlib.Path(self.USER_DIR).exists():
             self.logger.debug(f"Creating user folder {self.USER_DIR}")
             self.USER_DIR.mkdir(exist_ok=True)
 

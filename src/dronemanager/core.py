@@ -99,7 +99,8 @@ class DroneManager:
 
     """
 
-    def __init__(self, logger: logging.Logger | None = None, log_to_console: bool = True, console_log_level = logging.INFO):
+    def __init__(self, logger: logging.Logger | None = None, log_to_console: bool = True, load_defaults: bool = True,
+                 console_log_level = logging.INFO):
         self.drones: dict[str, Drone] = {}
         # self.drones acts as the list/manager of connected drones, any function that writes or deletes items should
         # protect those writes/deletes with this lock. Read only functions can ignore it.
@@ -112,6 +113,10 @@ class DroneManager:
         self._on_drone_connect_coros = set()
 
         self.config = DMConfig.from_file(get_config().as_posix())
+
+        #: Load default plugins and comm protocols. Useful for testing or as a"safe-mode"
+        self.load_defaults = load_defaults
+
         self.drone_configs = self.config.drone_configs
 
         self.system_id = self.config.mav_system_id
@@ -146,8 +151,9 @@ class DroneManager:
         self.logger.info(f"Starting DroneManager version {dronemanager.__version__}")
 
     async def start(self):
-        await asyncio.create_task(self._load_default_plugins())
-        await asyncio.create_task(self._load_default_comm_protocols())
+        if self.load_defaults:
+            await asyncio.create_task(self._load_default_plugins())
+            await asyncio.create_task(self._load_default_comm_protocols())
 
     async def _load_default_plugins(self):
         plugin_tasks = []

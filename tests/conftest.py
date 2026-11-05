@@ -11,7 +11,7 @@ from unittest.mock import Mock, AsyncMock
 import cv2
 
 from dronemanager.core import DroneManager
-from dronemanager.drone import Battery, Drone, DroneConfig, FlightMode, DroneParams
+from dronemanager.drone import Battery, Drone, DroneComProtocol, DroneConfig, FlightMode, DroneParams
 from dronemanager.navigation.core import PathGenerator, PathFollower, Waypoint, WayPointType
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 
@@ -26,7 +26,7 @@ async def dm() -> AsyncGenerator[DroneManager, Any]:
     Yields:
         A DroneManager instance.
     """
-    dm = DroneManager(log_to_console=False)
+    dm = DroneManager(log_to_console=False, load_defaults=False)
     await dm.start()
     yield dm
     await dm.close()
@@ -121,15 +121,18 @@ def mock_drone_getter() -> Callable[[int], Mock]:
         mockdrone.shutdown = AsyncMock()
         mockdrone.name = name
 
-        mockdrone.batteries = []
-        mockdrone.batteries.append(Battery())
-        mockdrone.batteries[0].remaining = 90
+        # Com Mocks
+        mockdrone.comm = Mock(spec=DroneComProtocol)
+        mockdrone.comm.SUPPORTS = {}
 
         # Drone property mocks
         mockdrone.path_generator = Mock(spec=PathGenerator)
         mockdrone.path_generator.target_position = Waypoint(WayPointType.POS_NED, pos=[2, 3, -6], yaw=90)
         mockdrone.path_follower = Mock(spec=PathFollower)
-        mockdrone.config = DroneConfig(name, drone_identifier=str(count), comm_protocol="mav", connection="dummy_address")
+        mockdrone.config = DroneConfig(name,
+                                       drone_identifier=str(count),
+                                       comm_protocol="mav",
+                                       connection="dummy_address")
         mockdrone.position_ned = np.asarray([1, 1, -2], dtype=np.float64)
         mockdrone.position_global = np.asarray([-1, -1, 300], dtype=np.float64)
         mockdrone.velocity = np.asarray([0.1, 0.2, 0.3], dtype=np.float64)
@@ -144,6 +147,10 @@ def mock_drone_getter() -> Callable[[int], Mock]:
         mockdrone.drone_params.max_up_vel = 1
         mockdrone.drone_params.max_down_vel = 1
         mockdrone.drone_params.max_yaw_rate = 30
+
+        mockdrone.batteries = []
+        mockdrone.batteries.append(Battery())
+        mockdrone.batteries[0].remaining = 90
 
         # Function mocks
         mockdrone.arm = AsyncMock()

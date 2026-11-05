@@ -5,7 +5,7 @@ import math
 import os.path
 from collections.abc import Callable
 from abc import ABC, abstractmethod
-from typing import Coroutine, TypeVar, Generic
+from typing import Coroutine, TypeVar, Generic, Any
 
 import numpy as np
 
@@ -51,7 +51,7 @@ class DroneComProtocol(ABC):
 
     NAME = "YOUDIDSOMETHINGWRONG"
 
-    SUPPORTS: dict[str, type | None] = {}
+    SUPPORTS: dict[str, type[Any]] = {}
     # A dictionary with strings about what kind of extra things, such as gimbals, this protocol supports. Plugins
     # define what or how things should be listed here, for example the gimbal plugin checks for the presence of a
     # "gimbal" entry. The value should be the class for this kind of thing and this com protocol.
@@ -101,7 +101,8 @@ class DroneComProtocol(ABC):
     async def discovered_other(self):
         """Like :py:meth:`discovered_drone_systems` but for things which are not drones.
 
-        Might be used by other parts of the code to connect ancillary hardware."""
+        Might be used by other parts of the code to connect ancillary hardware.
+        """
 
     @abstractmethod
     async def add_drone(self, drone_name: str, drone_identifier: str, config) -> "Drone | None":
@@ -121,7 +122,8 @@ class DroneComProtocol(ABC):
         :py:meth:`~dronemanager.drone.Drone.shutdown` on the specific drone object directly. That function then calls
         this to make sure the drone is deregistered with the protocol, if necessary.
 
-        Should return True if the drone was disconnected."""
+        Should return True if the drone was disconnected.
+        """
         raise NotImplementedError
 
 
@@ -366,7 +368,7 @@ class Drone(ABC, Generic[CommType]):
 
     @abstractmethod
     def add_message_callback(self, message_name: str, callback: Callable):
-        """ Add callback to a specific message. The callback is executed every time a corresponding message is received.
+        """Add callback to a specific message. The callback is executed every time a corresponding message is received.
 
         The callback signature should be callback(message). Note that the types of messages available can depend on the
         specific communication protocol (i.e. MAVLink).
@@ -380,7 +382,7 @@ class Drone(ABC, Generic[CommType]):
 
     @abstractmethod
     def remove_message_callback(self, message_name: str, callback: Callable):
-        """ Remove a callback.
+        """Remove a callback.
 
         Args:
             message_name: The target message
@@ -417,9 +419,7 @@ class Drone(ABC, Generic[CommType]):
     @property
     @abstractmethod
     def position_global(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-        """
-
-        :return: Array with the GPS coordinates [latitude, longitude, AMSL]
+        """:return: Array with the GPS coordinates [latitude, longitude, AMSL]
         """
         pass
 
@@ -462,7 +462,8 @@ class Drone(ABC, Generic[CommType]):
         """Uninitializes the drone, shutting down related processing.
 
         Base implementation ends the thread, stops coroutines and closes logging.
-        Implementing classes should call this during their own shutdown procedure."""
+        Implementing classes should call this during their own shutdown procedure.
+        """
         cancel_running_tasks(self.running_tasks)
         for handler in self.logging_handlers:
             self.logger.removeHandler(handler)

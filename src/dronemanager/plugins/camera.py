@@ -10,6 +10,9 @@ from dronemanager.plugin import Plugin
 from dronemanager.utils import cancel_running_tasks
 
 
+SUPPORTS_STRING = "camera"
+
+
 class CameraPlugin(Plugin):
     PREFIX = "cam"
 
@@ -49,16 +52,16 @@ class CameraPlugin(Plugin):
 
     async def _get_potential_camera_idents(self, drone: str) -> tuple[list[str], list[str]]:
         drone_obj = self.dm.drones[drone]
-        if "camera" not in drone_obj.comm.SUPPORTS:
-            self.logger.info(f"The communication protocol {drone_obj.comm} for {drone} does not support cameras!")
-        cam_class: Type[Camera] = drone_obj.comm.SUPPORTS["camera"]
+        if SUPPORTS_STRING not in drone_obj.comm.SUPPORTS:
+            self.logger.info(f"The communication protocol {drone_obj.comm.NAME} for {drone} does not support cameras!")
+        cam_class: Type[Camera] = drone_obj.comm.SUPPORTS[SUPPORTS_STRING]
         cam_identifiers = await cam_class.get_cameras(drone_obj)
         return cam_identifiers
 
     async def list_potential_cameras(self, drone: str):
         cam_identifiers, extra_info = await self._get_potential_camera_idents(drone)
         drone_obj = self.dm.drones[drone]
-        cam_class: Type[Camera] = drone_obj.comm.SUPPORTS["camera"]
+        cam_class: Type[Camera] = drone_obj.comm.SUPPORTS[SUPPORTS_STRING]
         if len(cam_identifiers) == 0:
             self.logger.info(f"No cameras found for {drone}")
         identifier_entries = []
@@ -71,11 +74,12 @@ class CameraPlugin(Plugin):
     async def add_camera(self, drone: str, camera_identifier: str) -> Camera | None:
         """Add a camera from/for a given drone to the plugin.
 
-        Returns the camera object if it was added successfully, None otherwise."""
+        Returns the camera object if it was added successfully, None otherwise.
+        """
         self.logger.info(f"Adding camera to drone {drone}.")
         camera_identifiers, extra_info = await self._get_potential_camera_idents(drone)
         drone_obj = self.dm.drones[drone]
-        camera_class: Type[Camera] = drone_obj.comm.SUPPORTS["camera"]
+        camera_class: Type[Camera] = drone_obj.comm.SUPPORTS[SUPPORTS_STRING]
         if len(camera_identifiers) == 0:
             self.logger.info(f"No cameras found for {drone}")
             return None
@@ -207,7 +211,8 @@ class Camera(ABC, Generic[DroneType]):
         """A pretty, human understandable version of the identifier.
 
         The extra_info attribute can be used to provide more information to a user about what the camera is, without
-        bloating the identifier string itself."""
+        bloating the identifier string itself.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -247,19 +252,22 @@ class Camera(ABC, Generic[DroneType]):
     async def start_video(self) -> bool:
         """Turn video recording on or off.
 
-        Should return True if the camera accepted the command."""
+        Should return True if the camera accepted the command.
+        """
         raise NotImplementedError
 
     async def stop_video(self) -> bool:
         """Turn video recording on or off.
 
-        Should return information on the captured video."""
+        Should return information on the captured video.
+        """
         raise NotImplementedError
 
     async def set_zoom(self, zoom: float):
         """Set the zoom for this camera.
 
-        Behaviour can depend on the camera and communication protocol."""
+        Behaviour can depend on the camera and communication protocol.
+        """
         raise NotImplementedError
 
     async def load_camera_parameters(self):
@@ -275,7 +283,8 @@ class Camera(ABC, Generic[DroneType]):
 
         Exact behaviour will depend on implementing subclasses.
 
-        Should return the parsed value, or None if the value could not be parsed."""
+        Should return the parsed value, or None if the value could not be parsed.
+        """
         raise NotImplementedError
 
     async def set_parameter(self, param_name: str, param_value: bool | int | float | str):

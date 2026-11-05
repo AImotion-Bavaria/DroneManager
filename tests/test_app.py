@@ -1,5 +1,6 @@
 """Module to test the terminal interface."""
-import asyncio
+from typing import Callable
+from unittest.mock import Mock
 
 from dronemanager.app import DroneApp
 from dronemanager.core import DroneManager
@@ -15,11 +16,12 @@ def test_smoke(dm: DroneManager):
     app.run(headless=True)
 
 
-async def test_control_screen(dm: DroneManager, mock_drone_getter):
+async def test_control_screen(dm: DroneManager, mock_drone_getter: Callable[[int], Mock]):
     """Test the CLI and key commands.
 
     Args:
         dm: DroneManager instance.
+        mock_drone_getter: Function to create mock drone objects.
     """
     app = DroneApp(dm, logger=dm.logger, smoke_test=False)
     mock_drone = mock_drone_getter(1)
@@ -59,6 +61,8 @@ async def test_control_screen(dm: DroneManager, mock_drone_getter):
         cli = screen.query_one("#cli")
         cli.focus()
 
+        await enter_command("load mission")
+        await pilot.pause()
         await enter_command("mission-load engel")
         await pilot.pause()
         await enter_command("fake-command which does not exist")

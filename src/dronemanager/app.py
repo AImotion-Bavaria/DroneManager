@@ -271,11 +271,6 @@ class CommandScreen(Screen):
 
         self._awaiter_tasks = set()
 
-        start_task = asyncio.create_task(self.dm.start())
-        start_awaiter_task = asyncio.create_task(coroutine_awaiter(start_task, self.logger))
-        self.app.running_tasks.add(start_task)
-        self.app.running_tasks.add(start_awaiter_task)
-
     def _base_parser(self):
         parser = ArgParser(logger = self.logger, description="Interactive command line interface to connect and control multiple drones")
         command_parsers = parser.add_subparsers(title="command", description="Command to execute.", dest="command")
@@ -665,8 +660,9 @@ class CommandScreen(Screen):
             self.logger.error("Exception during exit function!")
             self.logger.debug(repr(e), exc_info=True)
 
-    def _schedule_initialization_tasks(self):
-        asyncio.create_task(self._logging_setup())
+    async def _schedule_initialization_tasks(self):
+        await self._logging_setup()
+        await self.dm.start()
 
     async def _logging_setup(self):
         output = None
@@ -687,7 +683,6 @@ class CommandScreen(Screen):
         super()._on_mount(event)
         self.query_one("#output", expect_type=Log).can_focus = False
         self.set_interval(1 / UPDATE_RATE, self._drain_textual_logs)
-        self.dm.start()
 
     def _drain_textual_logs(self):
         if self.textual_log_handler is not None:
@@ -714,7 +709,7 @@ class CommandScreen(Screen):
             InputWithHistory(placeholder="Command line", id="cli")
         )
         yield Footer()
-        self._schedule_initialization_tasks()
+        asyncio.create_task(self._schedule_initialization_tasks())
 
 
 def check_cli_command_signatures(command: Callable) -> list[tuple]:
@@ -991,13 +986,15 @@ def main():
     else:
         script_parser = argparse.ArgumentParser()
         script_parser.add_argument("--config", type=str, help="Path to the config file.", required=False)
+        script_parser.add_argument("-sm", "--safe-mode", action="store_true",
+                                   help="Don't load default plugins or comm protocols.")
         args = script_parser.parse_args()
 
         if args.config is not None:
             dronemanager.utils._CONFIG_FILE = pathlib.Path(args.config)
             print("Using non-standard config location.")
 
-        drone_manager = DroneManager(log_to_console=False)
+        drone_manager = DroneManager(log_to_console=False, load_defaults=not args.safe_mode)
         app = DroneApp(drone_manager, logger=drone_manager.logger)
         app.run()
 

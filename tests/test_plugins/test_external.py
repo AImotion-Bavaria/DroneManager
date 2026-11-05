@@ -47,7 +47,7 @@ async def test_frequency_example(dm_for_external: DroneManager):
     await frequency_example("127.0.0.1", DEFAULT_SERVER_PORT)
 
 
-async def test_dummy_client(dm_for_external: DroneManager, mock_drone_getter):
+async def test_dummy_client(dm_for_external: DroneManager, mock_drone_getter: Callable[[int], Mock]):
     """Test the dummy client and UDP plugin in one.
 
     Starts a client, sends messages to the plugin and checks that the client is receiving messages and the plugin is
@@ -90,3 +90,6 @@ async def test_dummy_client(dm_for_external: DroneManager, mock_drone_getter):
         await dm_for_external.close()
         await asyncio.sleep(client.max_listen_time + 1)
         assert not client.receiving_messages
+
+    # Check that the dummy udp client closed after the block was exited
+    assert client.socket.fileno() == -1

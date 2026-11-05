@@ -33,14 +33,18 @@ from dronemanager.navigation.core import WayPointType, Waypoint
 from dronemanager.navigation.directtargetgenerator import DirectTargetGenerator
 from dronemanager.navigation.ruckigfollower import RuckigOfflineFollower
 from dronemanager.plugins.camera import Camera, CameraParameter
+from dronemanager.plugins.camera import SUPPORTS_STRING as CAM_SUPPORT_STRING
 from dronemanager.plugins.gimbal import Gimbal, YawMode, ControlMode, SendMode
+from dronemanager.plugins.gimbal import SUPPORTS_STRING as GIMBAL_SUPPORT_STRING
+from dronemanager.plugins.optitrack import SUPPORTS_STRING as MOCAP_SUPPORT_STRING
+from dronemanager.plugins.controllers import SUPPORTS_STRING as MANUAL_SUPPORT_STRING
 from dronemanager.utils import CACHE_DIR, coroutine_awaiter, parse_address, relative_gps
 
 
 class MAVSDKComm(DroneComProtocol):
 
     NAME: str = "mav"
-    SUPPORTS: dict[str, type | None] = {}
+    SUPPORTS: dict[str, type] = {}
 
     def __init__(self, logger, system_id: int, component_id: int):
         super().__init__(logger)
@@ -662,9 +666,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             raise RuntimeError("Can't take off without being armed!")
 
     async def takeoff(self, altitude=2.0, allow_in_air=True) -> bool:
-        """
-
-        :param altitude:
+        """:param altitude:
         :return:
         """
         if not allow_in_air and self.in_air:
@@ -685,9 +687,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         return pos_yaw
 
     async def _takeoff_using_takeoffmode(self, altitude=2.0):
-        """
-
-        :param altitude: Currently ignored.
+        """:param altitude: Currently ignored.
         :return:
         """
         self.logger.info("Trying to take off...")
@@ -705,9 +705,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         return True
 
     async def _takeoff_using_offboard(self, altitude=2.0, tolerance=0.25):
-        """
-
-        :param altitude:
+        """:param altitude:
         :param tolerance:
         :return:
         """
@@ -847,7 +845,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         return True
 
     async def spin_at_rate(self, yaw_rate, duration, direction="cw"):
-        """ Spin in place at the given rate for the given duration.
+        """Spin in place at the given rate for the given duration.
 
         Pausable.
 
@@ -874,7 +872,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
 
     async def fly_to(self, local: np.ndarray | None = None, gps: np.ndarray | None = None, yaw: float | None = None,
                      waypoint: Waypoint | None = None, tolerance=0.25, put_into_offboard=True, log=True):
-        """ Fly to a specified point in offboard mode. Uses path generators and followers to get there.
+        """Fly to a specified point in offboard mode. Uses path generators and followers to get there.
 
         If multiple target are provided (for example GPS and local coordinates), we prefer coordinates in this fashion:
         Waypoint > GPS > local, i.e. in the example, the local coordinates would be ignored.
@@ -1801,7 +1799,7 @@ def _xml_cache_filepath(uri, version):
 
 
 # COMM SUPPORTS
-MAVSDKComm.SUPPORTS["gimbal"] = MAVSDKGimbal
-MAVSDKComm.SUPPORTS["camera"] = MAVSDKCamera
-MAVSDKComm.SUPPORTS["mocap"] = None
-MAVSDKComm.SUPPORTS["manual"] = None
+MAVSDKComm.SUPPORTS[GIMBAL_SUPPORT_STRING] = MAVSDKGimbal
+MAVSDKComm.SUPPORTS[CAM_SUPPORT_STRING] = MAVSDKCamera
+MAVSDKComm.SUPPORTS[MOCAP_SUPPORT_STRING] = type(None)
+MAVSDKComm.SUPPORTS[MANUAL_SUPPORT_STRING] = type(None)

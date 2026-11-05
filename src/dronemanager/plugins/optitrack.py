@@ -62,6 +62,10 @@ from dronemanager.plugin import Plugin
 from dronemanager.plugins.NatNet.NatNetClient import NatNetClient
 
 
+SUPPORTS_STRING: str = "mocap"
+"""Entry in the :py:class:`~dronemanager.drone.DroneComProtocol` SUPPORTS dictionary for this plugin."""
+
+
 class OptitrackPlugin(Plugin):
     """The plugin for processing data from OptiTrack Motive.
 
@@ -197,7 +201,7 @@ class OptitrackPlugin(Plugin):
             client.shutdown()
             return False
 
-    async def add_drone(self, name: str, track_id: int):
+    async def add_drone(self, name: str, track_id: int) -> bool:
         """Assign a track to a drone to forward data from the track to the drone.
 
         Available tracks can be viewed with :py:meth:`log_available_bodies`.
@@ -205,17 +209,24 @@ class OptitrackPlugin(Plugin):
         Args:
             name: The name of the drone.
             track_id: The track ID of the track.
+
+        Returns:
+            Whether the drone was added to the plugin.
         """
         if name not in self.dm.drones:
             self.logger.warning(f"No drone named {name}!")
-        elif "mocap" not in self.dm.drones[name].comm.SUPPORTS:
-            self.logger.warning(f"Drone {name} comm protocol {self.dm.drones[name].comm.name} does not support mocap!")
+            return False
+        elif SUPPORTS_STRING not in self.dm.drones[name].comm.SUPPORTS:
+            self.logger.warning(f"Drone {name} comm protocol {self.dm.drones[name].comm.NAME} does not support mocap!")
+            return False
         elif track_id not in self.available_bodies:
             self.logger.warning(f"No track {track_id} available!")
             await self.log_available_bodies()
+            return False
         else:
             self._drone_id_mapping[track_id] = name
             self.logger.info(f"Added drone {name} with track {track_id} to the tracking system.")
+            return True
 
     async def remove_drone(self, name: str):
         """Stop forwarding information for a drone.
