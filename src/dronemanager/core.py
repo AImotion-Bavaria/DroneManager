@@ -13,7 +13,6 @@ from typing import Callable
 
 import dronemanager
 import dronemanager.drone
-from dronemanager.comm_protocols.mav import MAVSDKComm
 from dronemanager.drone import Drone, DroneComProtocol, DroneConfigs, DroneConfig, FlightMode
 from dronemanager.navigation.core import Waypoint, Fence
 from dronemanager.navigation.rectlocalfence import RectLocalFence
@@ -177,6 +176,7 @@ class DroneManager:
 
     async def add_comm_protocol(self, name):
         # TODO: Comm discovery? Make them plugins?
+        from dronemanager.comm_protocols.mav import MAVSDKComm
         if name == "mav":
             self.comm_protocols[MAVSDKComm.NAME] = MAVSDKComm(self.logger, system_id=self.system_id,
                                                               component_id=self.component_id)
