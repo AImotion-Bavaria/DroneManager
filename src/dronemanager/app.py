@@ -143,7 +143,11 @@ Bar {
 """
     """CSS for the status screen."""
 
-    app = getters.app(lambda: DroneApp)
+    app = getters.app(DroneApp)
+    """Replacement for the app attribute to help with type checking.
+    
+    :meta hide-value:
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -218,8 +222,6 @@ Bar {
 
 
 class CommandScreen(Screen):
-    # How often the drone overview screen is updated.
-    STATUS_REFRESH_RATE = 20
 
     CSS = """
 .text {
@@ -239,7 +241,11 @@ class CommandScreen(Screen):
 }
 """
 
-    app = getters.app(lambda: DroneApp)
+    app = getters.app(DroneApp)
+    """Replacement for the app attribute to help with type checking.
+    
+    :meta hide-value:
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
