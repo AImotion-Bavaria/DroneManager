@@ -20,7 +20,7 @@ from dronemanager.plugins.mission import Mission
 from dronemanager.sensors.ecowitt import WeatherData
 from dronemanager.plugins.camera import CameraParameter, Camera
 from dronemanager.plugins.gimbal import Gimbal, YawMode
-from dronemanager.plugins.controllers import ActionInputType
+from dronemanager.plugins.controllers import ActionInputType, Controller
 from dronemanager.utils import CACHE_DIR, coroutine_awaiter
 
 
@@ -571,18 +571,17 @@ class ENGELDataMission(Mission):
 
     # Controller functions
 
-    def _do_capture_controller(self):
+    def _do_capture_controller(self, controller: Controller):
         capture_task = asyncio.create_task(self.do_capture())
         capture_awaiter = asyncio.create_task(coroutine_awaiter(capture_task, self.logger))
         self.running_tasks.add(capture_task)
         self.running_tasks.add(capture_awaiter)
 
-    def _swap_gimbal_axis(self):
+    def _swap_gimbal_axis(self, controller: Controller):
         self.logger.info(f"Now controlling gimbal {'Pitch' if self._control_gimbal_pitch else 'Yaw'}")
         self._control_gimbal_pitch = not self._control_gimbal_pitch
 
-    def _get_gimbal_rate(self, values):
-        # If the trigger is depressed enough to be positive only:
+    def _get_gimbal_rate(self, controller: Controller, values):
         l_trigger, r_trigger = values
         l_value = self._trigger_response_function(l_trigger)
         r_value = self._trigger_response_function(r_trigger)

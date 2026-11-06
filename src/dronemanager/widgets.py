@@ -8,7 +8,7 @@ from queue import Queue
 from rich.text import Text
 from textual.binding import Binding
 from textual.widgets import Input, Log, Static
-from typing import IO
+from typing import Any, IO
 
 from dronemanager.drone import FlightMode, FixType, Drone
 
@@ -27,12 +27,12 @@ class PrintHelpInsteadOfParsingError(Exception):
 class ArgParser(argparse.ArgumentParser):
     """Adjusted ArgumentParser that raises Exceptions instead of calling sys.exit."""
 
-    def __init__(self, *args, logger: logging.Logger = None, **kwargs):
+    def __init__(self, logger: logging.Logger, *args,  **kwargs):
         """Create ArgParser.
 
         Args:
-            *args: Passed to base class.
             logger: The logger used for parsing errors and help output.
+            *args: Passed to base class.
             **kwargs: Passed to base class.
         """
         self.logger: logging.Logger = logger  #: The logger used for parsing errors and help output.
@@ -75,7 +75,7 @@ class ArgParser(argparse.ArgumentParser):
         self._print_message(self.format_help(), file)
         raise PrintHelpInsteadOfParsingError()
 
-    def _print_message(self, message: str, file: IO[str] | None = None):
+    def _print_message(self, message: str, file: IO[str] | tuple[logging.Logger, int] | None = None):
         if message:
             file = file or (self.logger, logging.ERROR)
             try:
@@ -86,7 +86,7 @@ class ArgParser(argparse.ArgumentParser):
             except (AttributeError, OSError):
                 pass
 
-    def exit(self, status: int = 0, message: str = None):
+    def exit(self, status: int = 0, message: str | None = None):
         """Changes the exit behaviour of the ArgumentParser to not call sys.exit().
 
         Args:
@@ -119,7 +119,7 @@ class InputWithHistory(Input):
     BINDINGS.append(Binding("up", "history_prev", "Previous item from history", show=False))
     BINDINGS.append(Binding("down", "history_rec", "Next item in history", show=False))
 
-    def __init__(self, *args: any, **kwargs: any):
+    def __init__(self, *args: Any, **kwargs: Any):
         """Create the widget.
 
         Args:
@@ -378,7 +378,7 @@ class DroneOverview(Static):
     async def update_display(self):
         """Update the overview screen with current information.
 
-        Continuously updates the screen with the frequency set by :py:attr:`update_frequency`.
+        Continuously updates the screen with the frequency set by :py:attr:`~DroneOverview.update_frequency`.
         """
         while True:
             try:

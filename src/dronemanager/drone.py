@@ -490,7 +490,7 @@ class Drone(ABC, Generic[CommType]):
         pass
 
     @abstractmethod
-    async def change_flight_mode(self, flightmode: FlightMode) -> bool:
+    async def change_flight_mode(self, flightmode: FlightMode, quiet: bool = False) -> bool:
         pass
 
     def is_at_waypoint(self, waypoint: Waypoint, pos_tolerance=0.25, vel_tolerance=0.1, yaw_tolerance=1) -> bool:

@@ -278,7 +278,7 @@ class CommandScreen(Screen):
         self._awaiter_tasks = set()
 
     def _base_parser(self):
-        parser = ArgParser(logger = self.logger, description="Interactive command line interface to connect and control multiple drones")
+        parser = ArgParser(self.logger, description="Interactive command line interface to connect and control multiple drones")
         command_parsers = parser.add_subparsers(title="command", description="Command to execute.", dest="command")
 
         add_conn_parser = command_parsers.add_parser("add-conn", help="Add a connection", logger=self.logger)
@@ -993,12 +993,24 @@ def main():
         script_parser = argparse.ArgumentParser()
         script_parser.add_argument("--config", type=str, help="Path to the config file.", required=False)
         script_parser.add_argument("-sm", "--safe-mode", action="store_true",
-                                   help="Don't load default plugins or comm protocols.")
+                                   help="Don't load default plugins or comm protocols and dump thread information "
+                                        "every few seconds.")
         args = script_parser.parse_args()
 
         if args.config is not None:
             dronemanager.utils._CONFIG_FILE = pathlib.Path(args.config)
             print("Using non-standard config location.")
+
+        if args.safe_mode:
+            import faulthandler
+
+            dump_file = open(LOG_DIR.joinpath("thread-dumps.log").as_posix(), "w")
+            # Dump all thread stacks every 10 seconds
+            faulthandler.dump_traceback_later(
+                timeout=10,
+                repeat=True,
+                file=dump_file
+            )
 
         drone_manager = DroneManager(log_to_console=False, load_defaults=not args.safe_mode)
         app = DroneApp(drone_manager, logger=drone_manager.logger)

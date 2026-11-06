@@ -15,7 +15,7 @@ class, instead implementing their own processing loop, preferably in a separate 
 import abc
 import logging
 import pathlib
-from typing import Callable
+from typing import Any, Callable
 
 import dronemanager.core
 from dronemanager.plugin import Plugin, MetaPlugin
@@ -74,11 +74,11 @@ class Sensor(Plugin, abc.ABC):
             "reconnect": self.reconnect,
         }
 
-        self.connect_args: any = None  #: Connection args for convenient reconnect.
-        self.connect_kwargs: any = None  #: Connection kwargs for convenient reconnect.
+        self.connect_args: Any = None  #: Connection args for convenient reconnect.
+        self.connect_kwargs: Any = None  #: Connection kwargs for convenient reconnect.
 
         #: The last received/collected data should be stored here for others to use without access delay
-        self.last_data: any = None
+        self.last_data: Any = None
 
     async def start(self):
         """This function is called once the sensor plugin is loaded.
@@ -96,7 +96,7 @@ class Sensor(Plugin, abc.ABC):
         await super().close()
 
     @abc.abstractmethod
-    async def connect(self, *args: any, **kwargs: any) -> bool:
+    async def connect(self, *args: Any, **kwargs: Any) -> bool:
         """Connect to a sensor.
 
         Implementing classes should call this at the start of their connect function. The args and kwargs here are used

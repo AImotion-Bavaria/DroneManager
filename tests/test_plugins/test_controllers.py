@@ -6,17 +6,18 @@ import pathlib
 import pygame
 import pytest
 from typing import Any, AsyncGenerator, Callable
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 from dronemanager.core import DroneManager, DMConfig
 from dronemanager.drone import FlightMode
-from dronemanager.plugins.controllers import ActionInputType, InputMapping, SUPPORTS_STRING
+from dronemanager.plugins.controllers import ActionInputType, Controller, InputBinding, SUPPORTS_STRING
 
 
-def dummy_func(axes_values: list[float] | None = None) -> list[float] | None:
+def dummy_func(controller: Controller, axes_values: list[float] | None = None) -> list[float] | None:
     """A dummy function that just returns the input axes values.
 
     Args:
+        controller: The controller from which the stick inputs are coming.
         axes_values: Input values.
 
     Returns:
@@ -26,7 +27,7 @@ def dummy_func(axes_values: list[float] | None = None) -> list[float] | None:
 
 
 @pytest.fixture
-def ps4_mapping() -> InputMapping:
+def ps4_mapping() -> InputBinding:
     """Create an Input mapping for tests.
 
     Returns:
@@ -58,7 +59,7 @@ def ps4_mapping() -> InputMapping:
         5: "Left trigger",
         6: "Right trigger",
     }
-    mapping = InputMapping("PS4 Controller", 2, 1, -4, 3, -6, 1, 2, 12, 13,
+    mapping = InputBinding("PS4 Controller", 2, 1, -4, 3, -6, 1, 2, 12, 13,
                            axes_labels=ps4_axis_labels, button_labels=ps4_button_labels, hold_duration=2)
     return mapping
 
@@ -151,7 +152,7 @@ async def dm_with_controller(dm: DroneManager) -> AsyncGenerator[tuple[DroneMana
         await dm.unload_plugin("controllers")
 
 
-def test_mapping_functions(ps4_mapping: InputMapping):
+def test_mapping_functions(ps4_mapping: InputBinding):
     """Test the input mapping functions.
 
     Args:
@@ -214,7 +215,7 @@ def test_mapping_functions(ps4_mapping: InputMapping):
 
     # Test json saving and loading:
     json_str = ps4_mapping.to_json()
-    recovered_ps4_mapping = InputMapping.from_json(json_str)
+    recovered_ps4_mapping = InputBinding.from_json(json_str)
     assert recovered_ps4_mapping == ps4_mapping
 
     # Testing error behaviour
@@ -310,7 +311,7 @@ def test_mapping_functions(ps4_mapping: InputMapping):
 
 
 async def test_mapping_saving_and_loading(dm_with_controller: tuple[DroneManager, MagicMock, Mock],
-                                          ps4_mapping: InputMapping):
+                                          ps4_mapping: InputBinding):
     """Test adding a mapping, saving it, and then loading it again.
 
     Args:
@@ -324,26 +325,26 @@ async def test_mapping_saving_and_loading(dm_with_controller: tuple[DroneManager
     # Adding a new mapping
     test_mapping = copy.deepcopy(ps4_mapping)
     test_mapping.name = "Test_mapping"
-    n_mappings_initial = len(controller_plugin.mappings)
-    controller_plugin.mappings["Test_mapping"] = test_mapping
-    assert len(controller_plugin.mappings) == n_mappings_initial + 1
+    n_mappings_initial = len(controller_plugin.bindings)
+    controller_plugin.bindings["Test_mapping"] = test_mapping
+    assert len(controller_plugin.bindings) == n_mappings_initial + 1
 
     # Saving the mapping
-    await controller_plugin.save_current_mappings()
+    await controller_plugin.save_current_bindings()
     manager.save_config(test_config_file_path.as_posix())
 
     # Removing the new mapping
-    controller_plugin.mappings.pop("Test_mapping")
-    assert len(controller_plugin.mappings) == n_mappings_initial
+    controller_plugin.bindings.pop("Test_mapping")
+    assert len(controller_plugin.bindings) == n_mappings_initial
 
     # Loading the new config and the mappings from that config
     new_config = DMConfig.from_file(test_config_file_path.as_posix())
     manager.config = new_config
-    controller_plugin.load_mappings_from_config()
-    assert len(controller_plugin.mappings) == n_mappings_initial + 1
-    assert "Test_mapping" in controller_plugin.mappings
-    controller_plugin.mappings["Test_mapping"].name = ps4_mapping.name
-    assert ps4_mapping == controller_plugin.mappings["Test_mapping"]
+    controller_plugin.load_bindings_from_config()
+    assert len(controller_plugin.bindings) == n_mappings_initial + 1
+    assert "Test_mapping" in controller_plugin.bindings
+    controller_plugin.bindings["Test_mapping"].name = ps4_mapping.name
+    assert ps4_mapping == controller_plugin.bindings["Test_mapping"]
 
     # Remove test config file.
     test_config_file_path.unlink()
@@ -366,7 +367,7 @@ def post_fake_button_event(event_type: int, button_id: int, controller_id: int):
 
 
 async def test_plugin(dm_with_controller: tuple[DroneManager, Mock, Mock],
-                      mock_drone_getter: Callable[[int], Mock], ps4_mapping: InputMapping):
+                      mock_drone_getter: Callable[[int], Mock], ps4_mapping: InputBinding):
     """Big ugly test function for most parts of the plugin class.
 
     Args:
@@ -409,7 +410,7 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock, Mock],
     assert len(mock_joystick1.rumbles) == 3
     assert len(controller_plugin.controllers) == 1
     assert controller_plugin.controllers[31].id == 31
-    assert controller_plugin.controllers[31].input_mapping is None
+    assert controller_plugin.controllers[31].binding is None
 
     mock_func = Mock()
     mock_func.side_effect = dummy_func
@@ -422,17 +423,17 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock, Mock],
     ps4_mapping.add_action("Dummy axis action", action_type=ActionInputType.Axis, func=mock_axis_func, input_id=[2, -3])
 
     # Setting a mapping
-    controller_plugin.mappings["Test Mapping"] = ps4_mapping
-    await controller_plugin.set_mapping(5, "Test Mapping")
-    assert controller_plugin.controllers[31].input_mapping is None
-    await controller_plugin.set_mapping(31, "Fake mapping")
-    assert controller_plugin.controllers[31].input_mapping is None
+    controller_plugin.bindings["Test Mapping"] = ps4_mapping
+    await controller_plugin.set_binding(5, "Test Mapping")
+    assert controller_plugin.controllers[31].binding is None
+    await controller_plugin.set_binding(31, "Fake mapping")
+    assert controller_plugin.controllers[31].binding is None
     controller_plugin.controllers[31].in_control = True
-    await controller_plugin.set_mapping(31, "Test Mapping")
-    assert controller_plugin.controllers[31].input_mapping is None
+    await controller_plugin.set_binding(31, "Test Mapping")
+    assert controller_plugin.controllers[31].binding is None
     controller_plugin.controllers[31].in_control = False
-    await controller_plugin.set_mapping(31, "Test Mapping")
-    assert controller_plugin.controllers[31].input_mapping.name == "Test Mapping"
+    await controller_plugin.set_binding(31, "Test Mapping")
+    assert controller_plugin.controllers[31].binding.name == "Test Mapping"
 
     # Status
     await controller_plugin.status()
@@ -446,7 +447,7 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock, Mock],
     assert len(mock_joystick1.rumbles) == 4
 
     # Mapping logging
-    _ = await controller_plugin.view_mapping("Test Mapping")
+    _ = await controller_plugin.view_bindings("Test Mapping")
     _ = await controller_plugin.view_inputs("Test Mapping")
 
     # Add a mock_drone which doesn't support gamepad control
@@ -468,21 +469,6 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock, Mock],
     # Check that the supported drone and controller were assigned
     assert len(controller_plugin.drones) == 1
     assert controller_plugin.controllers[31].drone == mock_drone.name
-    # Check that the drone flightmode posctrl function was called
-    mock_drone.change_flight_mode.assert_called_once()
-    # Check that we called the stick input function.
-    mock_drone.set_manual_control_input.assert_called()
-    # Check that the axis input was called
-    mock_axis_func.assert_called_with([0.6, 0.9])
-
-    # Function which breaks
-    mock_axis_func.side_effect = RuntimeError("Test error")
-    mock_drone.set_manual_control_input.reset_mock()
-    mock_drone.set_manual_control_input.assert_not_called()
-    # Check that stick input still works
-    await asyncio.sleep(0.1)
-    mock_drone.set_manual_control_input.assert_called()
-    mock_axis_func.side_effect = None
 
     # Press and hold the control_button for a short time seconds, test nothing happens
     post_fake_button_event(pygame.JOYBUTTONDOWN, 5, 31)
@@ -503,7 +489,20 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock, Mock],
     post_fake_button_event(pygame.JOYBUTTONUP, 5, 31)
     await asyncio.sleep(0.1)
     assert controller_plugin.controllers[31].in_control
-    assert mock_drone.change_flight_mode.call_count == 2  # This change and the one earlier in the test.
+    mock_drone.change_flight_mode.assert_called_once()
+    # Check that we called the stick input function.
+    mock_drone.set_manual_control_input.assert_called()
+    # Check that the axis input was called with the right inputs
+    mock_axis_func.assert_called_with(ANY, [0.6, 0.9])
+
+    # Function which breaks
+    mock_axis_func.side_effect = RuntimeError("Test error")
+    mock_drone.set_manual_control_input.reset_mock()
+    mock_drone.set_manual_control_input.assert_not_called()
+    # Check that stick input still works
+    await asyncio.sleep(0.1)
+    mock_drone.set_manual_control_input.assert_called()
+    mock_axis_func.side_effect = None
 
     # Press the arm button, test that arm action was executed.
     post_fake_button_event(pygame.JOYBUTTONDOWN, 0, 31)
@@ -514,7 +513,7 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock, Mock],
     mock_get_count.return_value = 2
     await asyncio.sleep(0.1)
     assert len(controller_plugin.controllers) == 2
-    assert controller_plugin.controllers[5].input_mapping.name == "PS4 Controller"
+    assert controller_plugin.controllers[5].binding.name == "PS4 Controller"
 
     # Identify both controllers, check rumbles
     await controller_plugin.identify()
@@ -567,7 +566,7 @@ async def test_plugin(dm_with_controller: tuple[DroneManager, Mock, Mock],
 
 async def test_multiple_controllers(dm_with_controller: tuple[DroneManager, Mock, Mock],
                                     mock_drone_getter: Callable[[int], Mock],
-                                    ps4_mapping: InputMapping):
+                                    ps4_mapping: InputBinding):
     """Testing multiple drones with multiple controllers.
 
     Args:
@@ -609,7 +608,7 @@ async def test_multiple_controllers(dm_with_controller: tuple[DroneManager, Mock
     assert len(mock_joystick1.rumbles) == 1
     assert len(controller_plugin.controllers) == 1
     assert controller_plugin.controllers[31].id == 31
-    assert controller_plugin.controllers[31].input_mapping.name == "PS4 Controller"
+    assert controller_plugin.controllers[31].binding.name == "PS4 Controller"
 
     # Add firsts drone, check auto_assign
     mock_drone1.flightmode = FlightMode.HOLD
@@ -626,7 +625,7 @@ async def test_multiple_controllers(dm_with_controller: tuple[DroneManager, Mock
     await asyncio.sleep(0.3)
     assert len(mock_joystick2.rumbles) == 1
     assert len(controller_plugin.controllers) == 2
-    assert controller_plugin.controllers[5].input_mapping.name == "PS4 Controller"
+    assert controller_plugin.controllers[5].binding.name == "PS4 Controller"
 
     await controller_plugin.assign_drone(mock_drone2.name, 5)
     assert controller_plugin.controllers[5].drone == mock_drone2.name
@@ -634,10 +633,6 @@ async def test_multiple_controllers(dm_with_controller: tuple[DroneManager, Mock
 
     # Status
     await controller_plugin.status()
-
-    # Check that stick inputs are being forwarded
-    mock_drone1.set_manual_control_input.assert_called()
-    mock_drone2.set_manual_control_input.assert_called()
 
     # Press and release control button for drone 1, check that we took control
     post_fake_button_event(pygame.JOYBUTTONDOWN, 5, 31)
@@ -655,6 +650,10 @@ async def test_multiple_controllers(dm_with_controller: tuple[DroneManager, Mock
     await asyncio.sleep(0.1)
     assert controller_plugin.controllers[5].in_control
     assert mock_drone2.flightmode is FlightMode.POSCTL
+
+    # Check that stick inputs are being forwarded
+    mock_drone1.set_manual_control_input.assert_called()
+    mock_drone2.set_manual_control_input.assert_called()
 
     # Disconnect both drones
     await manager.disconnect(mock_drone1.name)

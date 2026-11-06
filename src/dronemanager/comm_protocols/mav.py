@@ -630,7 +630,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         self.logger.info("Arming!")
         await super().arm()
         result = await self._error_wrapper(self.mavaction.arm, ActionError)
-        if result and not isinstance(result, Exception):
+        if result is None:
             start_time = time.time()
             while not self.is_armed:
                 await asyncio.sleep(1 / self.position_update_rate)
@@ -639,8 +639,11 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                     return False
             self.logger.info("Armed!")
         else:
-            self.logger.warning("Couldn't arm!")
-        return result
+            self.logger.warning(f"Couldn't arm: {result}!")
+        if result:
+            return False
+        else:
+            return True
 
     async def disarm(self):
         timeout = 5
@@ -649,7 +652,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             await self.path_follower.deactivate()
         await super().disarm()
         result = await self._error_wrapper(self.mavaction.disarm, ActionError)
-        if result and not isinstance(result, Exception):
+        if result is None:
             start_time = time.time()
             while self.is_armed:
                 await asyncio.sleep(1 / self.position_update_rate)
@@ -658,7 +661,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                     return False
             self.logger.info("Disarmed!")
         else:
-            self.logger.warning("Couldn't disarm!")
+            self.logger.warning(f"Couldn't disarm: {result}!")
         return result
 
     def _can_takeoff(self):
@@ -694,8 +697,8 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         await super().takeoff(altitude=altitude)
         self._can_takeoff()
         result = await self._error_wrapper(self.mavaction.takeoff, ActionError)
-        if not result:
-            self.logger.warning("Takeoff denied!")
+        if result is not None:
+            self.logger.warning(f"Takeoff denied: {result}")
         while self.flightmode is not FlightMode.TAKEOFF:
             await asyncio.sleep(1 / self.position_update_rate)
         self.logger.info(f"Taking off to {altitude}m over launch!")
@@ -724,10 +727,11 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                 return True
             await asyncio.sleep(1 / self.position_update_rate)
 
-    async def change_flight_mode(self, flightmode: FlightMode, timeout: float = 5):
+    async def change_flight_mode(self, flightmode: FlightMode, timeout: float = 5, quiet: bool = False):
         assert flightmode in self.VALID_FLIGHTMODES,\
             f"FlightMode {flightmode.name} is not available for drone {self.name}!"
-        self.logger.info(f"Changing flight mode to {flightmode.name}")
+        if not quiet:
+            self.logger.info(f"Changing flight mode to {flightmode.name}")
         await super().change_flight_mode(flightmode)
         start_time = time.time()
         if flightmode == FlightMode.HOLD:
@@ -753,11 +757,8 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             result = await self._error_wrapper(self.mavmanual.start_altitude_control, ManualControlError)
         else:
             raise KeyError(f"{flightmode} is not a valid flightmode!")
-        if not result:
-            self.logger.warning(f"Couldn't change flight mode due to exception {repr(result)}")
-            return False
-        elif not result:
-            self.logger.warning("Flightmode change denied!")
+        if result is not None:
+            self.logger.warning(f"Couldn't change flight mode due to an error: {result}")
             return False
         else:
             while self.flightmode != flightmode and time.time() < start_time + timeout:
@@ -767,43 +768,45 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                                     "Possible connection issue.")
                 return False
             else:
-                self.logger.info(f"New flight mode {self.flightmode.name}!")
+                if not quiet:
+                    self.logger.info(f"New flight mode {self.flightmode.name}!")
                 return True
 
     async def set_setpoint(self, setpoint: "Waypoint"):
         setpoint_type = setpoint.type
         if setpoint_type == WayPointType.POS_NED:
             point_ned_yaw = PositionNedYaw(*setpoint.pos, setpoint.yaw)
-            return await self._error_wrapper(self.mavoffboard.set_position_ned, OffboardError, point_ned_yaw)
+            res = await self._error_wrapper(self.mavoffboard.set_position_ned, OffboardError, point_ned_yaw)
         elif setpoint_type == WayPointType.POS_VEL_NED:
             point_ned_yaw = PositionNedYaw(*setpoint.pos, setpoint.yaw)
             velocity_ned_yaw = VelocityNedYaw(*setpoint.vel, setpoint.yaw)
-            return await self._error_wrapper(self.mavoffboard.set_position_velocity_ned, OffboardError,
+            res =  await self._error_wrapper(self.mavoffboard.set_position_velocity_ned, OffboardError,
                                              point_ned_yaw, velocity_ned_yaw)
         elif setpoint_type == WayPointType.POS_VEL_ACC_NED:
             yaw = setpoint.yaw
             point_ned_yaw = PositionNedYaw(*setpoint.pos, yaw)
             velocity_ned_yaw = VelocityNedYaw(*setpoint.vel, yaw)
             acc_ned = AccelerationNed(*setpoint.acc)
-            return await self._error_wrapper(self.mavoffboard.set_position_velocity_acceleration_ned,
+            res =  await self._error_wrapper(self.mavoffboard.set_position_velocity_acceleration_ned,
                                              OffboardError,
                                              point_ned_yaw,
                                              velocity_ned_yaw,
                                              acc_ned)
         elif setpoint_type == WayPointType.VEL_NED:
             vel_yaw = VelocityNedYaw(*setpoint.vel, setpoint.yaw)
-            return await self._error_wrapper(self.mavoffboard.set_velocity_ned, OffboardError, vel_yaw)
+            res =  await self._error_wrapper(self.mavoffboard.set_velocity_ned, OffboardError, vel_yaw)
         elif setpoint_type == WayPointType.VEL_BODY:
             vel_yawrate = VelocityBodyYawspeed(*setpoint.vel, setpoint.yaw_rate)
-            return await self._error_wrapper(self.mavoffboard.set_velocity_body, OffboardError, vel_yawrate)
+            res =  await self._error_wrapper(self.mavoffboard.set_velocity_body, OffboardError, vel_yawrate)
         elif setpoint_type == WayPointType.POS_GLOBAL:
             latitude, longitude, amsl = setpoint.gps
             alt_type = PositionGlobalYaw.AltitudeType.AMSL
             position = PositionGlobalYaw(lat_deg=latitude, lon_deg=longitude, alt_m=amsl,
                                          yaw_deg=setpoint.yaw, altitude_type=alt_type)
-            return await self._error_wrapper(self.mavoffboard.set_position_global, OffboardError, position)
+            res =  await self._error_wrapper(self.mavoffboard.set_position_global, OffboardError, position)
         else:
             raise RuntimeError("Invalid SetPointType!")
+        return res is None
 
     def _can_do_in_air_commands(self):
         # TODO: Figure out how to do this with ardupilot. Currently the in_air detection seems very poor
@@ -1023,8 +1026,8 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
 
     async def _land_using_landmode(self):
         result = await self._error_wrapper(self.mavaction.land, ActionError)
-        if not result:
-            self.logger.warning("Couldn't go into land mode")
+        if result is not None:
+            self.logger.warning(f"Couldn't go into land mode: {result}")
         while self.flightmode is not FlightMode.LAND:
             await asyncio.sleep(1 / self.position_update_rate)
         self.logger.info("Landing!")
@@ -1035,8 +1038,9 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         return True
 
     async def set_manual_control_input(self, x, y, z, r):
+        z = (z + 1) / 2  # Mavlink wants input from 0 to 1 with up positive
         result = await self._error_wrapper(self.mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
-        return result
+        return result is None
 
     async def send_external_tracking_data(self, position: np.ndarray, rotation: np.ndarray, covariance: np.ndarray | None = None):
         covariance = Covariance([math.nan]) if covariance is None else covariance
@@ -1048,7 +1052,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         if self.is_connected:
             res = await self._error_wrapper(self.mavmocap.set_vision_position_estimate, MocapError,
                                             vis_pos_estimate, reraise=True)
-            return res
+            return res is None
         else:
             return False
 
@@ -1068,7 +1072,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         await super().kill()
         return True
 
-    async def _error_wrapper(self, func, error_type: Type[MavsdkError], *args, reraise = False, **kwargs):
+    async def _error_wrapper(self, func, error_type: Type[MavsdkError], *args, reraise = False, **kwargs) -> str | None:
         """Wrapper for MAVSDK functions.
 
         Intended for use with MAVSDK coroutines. Catches exceptions and returns False instead.
@@ -1081,7 +1085,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
             **kwargs: Passed to the coroutine being executed.
 
         Returns:
-            ``True`` if the MAVSDK call succeeds or ``False`` if the error type was raised.
+            ``None`` if the MAVSDK call succeeds or the result name for the raised error.
         """
         try:
             await func(*args, **kwargs)
@@ -1090,8 +1094,8 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
                 raise
             else:
                 self.logger.error(e.result.name)
-                return False
-        return True
+                return e.result.name
+        return None
 
 
 # ========== GIMBAL IMPLEMENTATION ====================================================================================

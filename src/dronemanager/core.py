@@ -565,15 +565,15 @@ class DroneManager:
             pass
 
     async def _remove_drone_object(self, name):
-        try:
-            self.drones.pop(name)
-        except KeyError:
-            pass
         for func in self._on_drone_removal_coros:
             try:
                 await asyncio.create_task(func(name))
             except Exception as e:
                 self.logger.debug(repr(e), exc_info=True)
+        try:
+            self.drones.pop(name)
+        except KeyError:
+            pass
 
     def add_remove_func(self, func):
         self._on_drone_removal_coros.add(func)

@@ -68,7 +68,7 @@ _CONFIG_FILE = DOC_DIR.joinpath("config.json")
 
 
 def get_config() -> pathlib.Path:
-    """Returns the location of the configuration json.
+    """Returns the location of the configuration JSON.
 
     A template config is shipped with DroneManager, which is installed if the file is missing.
 
@@ -94,8 +94,8 @@ def dist_ned(pos1: np.ndarray, pos2: np.ndarray) -> float:
     For n-dimensional points, the arrays should have shape (n,).
 
     Args:
-        pos1: First position, as a numpy array
-        pos2: Second position, as a numpy array
+        pos1: First position, as a NumPy array
+        pos2: Second position, as a NumPy array
 
     Returns:
         The distance between the two points as a float.
@@ -204,7 +204,7 @@ def offset_from_gps(origin: Sequence[float], gps1: Sequence[float], gps2: Sequen
 def ned_from_gps(gps1: Sequence[float], gps2: Sequence[float]) -> tuple[float, float, float]:
     """Given two GPS points, compute the NED difference between the two positions.
 
-    Utilizes the same algorithm as PX4 http://mathworld.wolfram.com/AzimuthalEquidistantProjection.html
+    Utilizes the same algorithm as PX4 https://mathworld.wolfram.com/AzimuthalEquidistantProjection.html
 
     Args:
         gps1: GPS coordinates of first point
@@ -275,13 +275,12 @@ def parse_address(string: str) -> tuple[str, str, int]:
         append = parse_drone_addr.port
         if scheme is None:
             scheme = "udp"
-        if scheme == "udp":
-            if loc is None:
-                loc = "127.0.0.1"
-            elif loc == "localhost":
-                loc = "127.0.0.1"
-            elif loc == "":
-                loc = "127.0.0.1"
+        if loc is None:
+            loc = "127.0.0.1"
+        elif loc == "localhost":
+            loc = "127.0.0.1"
+        elif loc == "":
+            loc = "127.0.0.1"
         if append is None:
             append = 14550
     return scheme, loc, append
@@ -301,7 +300,7 @@ async def coroutine_awaiter(task: asyncio.Future | Future, logger: logging.Logge
     """
     try:
         if isinstance(task, asyncio.Future):
-            await task
+            await asyncio.wrap_future(task)
     except asyncio.CancelledError:
         pass
     except Exception as e:

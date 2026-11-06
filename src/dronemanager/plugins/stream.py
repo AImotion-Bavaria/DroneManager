@@ -40,10 +40,10 @@ class StreamPlugin(Plugin):
         super().__init__(dm, logger, name)
         self.default_ip: str = ip  #: The ip used as the default for :py:meth:`start_stream`.
         self.default_port: int = int(port)  #: The port used as the default for :py:meth:`start_stream`.
-        self.running: bool = False
-        self.stream_task: asyncio.Task | None = None
-        self.display_stream: bool = False
-        self.callbacks: set[Callable] = set()
+        self.running: bool = False  #: Whether the stream is running
+        self.stream_task: asyncio.Task | None = None  #: The asyncio streaming task.
+        self.display_stream: bool = False  #: Whether to show the stream in a separate window.
+        self.callbacks: set[Callable] = set()  #: A set of callbacks called for each received frame.
 
         #: Available cli commands.
         self.cli_commands: dict[str, Callable] = {
@@ -52,7 +52,7 @@ class StreamPlugin(Plugin):
             "stop": self.stop_stream
         }
 
-    async def start_stream(self, ip: str = None, port: int = None) -> bool:
+    async def start_stream(self, ip: str | None = None, port: int | None = None) -> bool:
         """Starts the Video Stream.
 
         Args:
@@ -74,8 +74,9 @@ class StreamPlugin(Plugin):
         self.logger.info(f"Starting Stream Listener on {target_ip}:{target_port}...")
 
         # Run the loop as a background task so we don't block the CLI or DroneManager
-        self.stream_task = asyncio.create_task(self._stream_loop(target_ip, target_port))
-        self.running_tasks.add(self.stream_task)
+        stream_task = asyncio.create_task(self._stream_loop(target_ip, target_port))
+        self.stream_task = stream_task
+        self.running_tasks.add(stream_task)
         return True
 
     async def stop_stream(self):
