@@ -5,7 +5,7 @@ import math
 import os.path
 from collections.abc import Callable
 from abc import ABC, abstractmethod
-from typing import Coroutine, TypeVar, Generic
+from typing import Coroutine, TypeVar, Generic, Any
 
 import numpy as np
 
@@ -51,7 +51,7 @@ class DroneComProtocol(ABC):
 
     NAME = "YOUDIDSOMETHINGWRONG"
 
-    SUPPORTS: dict[str, type | None] = {}
+    SUPPORTS: dict[str, type[Any]] = {}
     # A dictionary with strings about what kind of extra things, such as gimbals, this protocol supports. Plugins
     # define what or how things should be listed here, for example the gimbal plugin checks for the presence of a
     # "gimbal" entry. The value should be the class for this kind of thing and this com protocol.
@@ -101,7 +101,8 @@ class DroneComProtocol(ABC):
     async def discovered_other(self):
         """Like :py:meth:`discovered_drone_systems` but for things which are not drones.
 
-        Might be used by other parts of the code to connect ancillary hardware."""
+        Might be used by other parts of the code to connect ancillary hardware.
+        """
 
     @abstractmethod
     async def add_drone(self, drone_name: str, drone_identifier: str, config) -> "Drone | None":
@@ -121,13 +122,14 @@ class DroneComProtocol(ABC):
         :py:meth:`~dronemanager.drone.Drone.shutdown` on the specific drone object directly. That function then calls
         this to make sure the drone is deregistered with the protocol, if necessary.
 
-        Should return True if the drone was disconnected."""
+        Should return True if the drone was disconnected.
+        """
         raise NotImplementedError
 
 
 
 class DroneConfig:
-    """ Convenience class for drone configurations.
+    """Convenience class for drone configurations.
 
     These exist for convenience purposes, to allow people to define drone objects with fixed parameters for easy reuse.
     They can be saved to and loaded from files. A given configuration is used when dm.connect_to_drone is called with
@@ -142,7 +144,7 @@ class DroneConfig:
                  max_yaw_acc: float = 30, max_yaw_jerk: float = 30, size: float = 1.0, rtsp: str | None = None, **kwargs):
         self.drone_name = drone_name
         self.drone_identifier = drone_identifier
-        self.protocol = comm_protocol
+        self.comm_protocol = comm_protocol
         self.connection = connection
         self.position_rate = position_rate
         self.max_h_vel = max_h_vel
@@ -224,7 +226,7 @@ class Drone(ABC, Generic[CommType]):
     # Drones which are discovered but not in use have an empty name "".
     # Even when not in use, they have a connection state through is_connected.
 
-    VALID_FLIGHTMODES = set()
+    VALID_FLIGHTMODES: set[FlightMode] = set()
     VALID_SETPOINT_TYPES = set()
 
     def __init__(self, comm_protocol: CommType, identifier, *args, **kwargs):
@@ -259,7 +261,7 @@ class Drone(ABC, Generic[CommType]):
         self.is_paused: bool = False
         self.drone_params: DroneParams | None = None
 
-        self._running_tasks = set()  # Keeps track of coroutines
+        self.running_tasks = set()  # Keeps track of coroutines
 
     @abstractmethod
     def start(self, name: str, config: DroneConfig):
@@ -293,7 +295,7 @@ class Drone(ABC, Generic[CommType]):
         telemetry_handler.setFormatter(COMMON_FORMATTER)
         self.add_telemetry_handler(telemetry_handler)
 
-        self.position_update_rate = config.position_rate
+        self.position_update_rate = self.config.position_rate
         asyncio.create_task(self._task_scheduler())
 
     async def _task_scheduler(self):
@@ -337,30 +339,36 @@ class Drone(ABC, Generic[CommType]):
         self.logger.addHandler(handler)
         self.logging_handlers.append(handler)
 
+    def remove_handler(self, handler):
+        if handler in self.logging_handlers:
+            self.logging_handlers.remove(handler)
+            self.logger.removeHandler(handler)
+
     def add_telemetry_handler(self, handler):
         self.telem_logger.addHandler(handler)
         self.telem_logging_handlers.append(handler)
 
     def pause(self):
-        """ Pause task execution by setting self.is_paused to True.
+        """Pause task execution by setting self.is_paused to True.
 
         Note that it is not possible to "pause" what the drone is doing in a general way. What "pausing" a task does or
         if a task can even be paused depends on the specific task and implementation. Subclasses must define and
         implement this behaviour themselves.
         However, pausing is always possible between tasks, and this is the default behaviour for subclasses that do not
         implement any of their own: When paused, drones will finish their current task and then wait until unpaused
-        before beginning the next task."""
+        before beginning the next task.
+        """
         self.is_paused = True
         self.logger.debug("Pausing...")
 
     def resume(self):
-        """ Resume executing tasks. """
+        """Resume executing tasks."""
         self.is_paused = False
         self.logger.debug("Resuming...")
 
     @abstractmethod
     def add_message_callback(self, message_name: str, callback: Callable):
-        """ Add callback to a specific message. The callback is executed every time a corresponding message is received.
+        """Add callback to a specific message. The callback is executed every time a corresponding message is received.
 
         The callback signature should be callback(message). Note that the types of messages available can depend on the
         specific communication protocol (i.e. MAVLink).
@@ -374,7 +382,7 @@ class Drone(ABC, Generic[CommType]):
 
     @abstractmethod
     def remove_message_callback(self, message_name: str, callback: Callable):
-        """ Remove a callback.
+        """Remove a callback.
 
         Args:
             message_name: The target message
@@ -411,9 +419,7 @@ class Drone(ABC, Generic[CommType]):
     @property
     @abstractmethod
     def position_global(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-        """
-
-        :return: Array with the GPS coordinates [latitude, longitude, AMSL]
+        """:return: Array with the GPS coordinates [latitude, longitude, AMSL]
         """
         pass
 
@@ -435,7 +441,7 @@ class Drone(ABC, Generic[CommType]):
     @property
     @abstractmethod
     def attitude(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-        """ RPY in degrees"""
+        """RPY in degrees."""
         pass
 
     @property
@@ -456,8 +462,9 @@ class Drone(ABC, Generic[CommType]):
         """Uninitializes the drone, shutting down related processing.
 
         Base implementation ends the thread, stops coroutines and closes logging.
-        Implementing classes should call this during their own shutdown procedure."""
-        cancel_running_tasks(self._running_tasks)
+        Implementing classes should call this during their own shutdown procedure.
+        """
+        cancel_running_tasks(self.running_tasks)
         for handler in self.logging_handlers:
             self.logger.removeHandler(handler)
         for handler in self.telem_logging_handlers:
@@ -473,7 +480,7 @@ class Drone(ABC, Generic[CommType]):
 
     @abstractmethod
     async def takeoff(self, altitude=2.0, allow_in_air=False) -> bool:
-        """ Takes off to the specified altitude above current position.
+        """Takes off to the specified altitude above current position.
 
         Note that altitude is positive.
 
@@ -483,11 +490,11 @@ class Drone(ABC, Generic[CommType]):
         pass
 
     @abstractmethod
-    async def change_flight_mode(self, flightmode) -> bool:
+    async def change_flight_mode(self, flightmode: FlightMode, quiet: bool = False) -> bool:
         pass
 
     def is_at_waypoint(self, waypoint: Waypoint, pos_tolerance=0.25, vel_tolerance=0.1, yaw_tolerance=1) -> bool:
-        """ Definition of "is at" depends on the waypoint type. At most checks position, yaw and
+        """Definition of "is at" depends on the waypoint type. At most checks position, yaw and
         velocity.
 
         :param waypoint:
@@ -515,9 +522,7 @@ class Drone(ABC, Generic[CommType]):
             raise ValueError("Invalid waypoint type for this function")
 
     def is_at_pos(self, target_pos, tolerance=0.25) -> bool:
-        """
-
-        :param target_pos: Array with target position. If a yaw is also passed (i.e. array length 4), it is ignored.
+        """:param target_pos: Array with target position. If a yaw is also passed (i.e. array length 4), it is ignored.
         :param tolerance: How close we have to be to the target position to be considered "at" it.
         :return:
         """
@@ -548,7 +553,7 @@ class Drone(ABC, Generic[CommType]):
         self.fence = fence_type(self.logger, *args, **kwargs)
 
     def check_waypoint(self, waypoint: "Waypoint"):
-        """ Check if a waypoint is valid and within any geofence (if such a fence is set)"""
+        """Check if a waypoint is valid and within any geofence (if such a fence is set)"""
         try:
             waypoint_valid = not self.fence or (self.fence and self.fence.check_waypoint_compatible(waypoint))
         except Exception as e:
@@ -561,15 +566,16 @@ class Drone(ABC, Generic[CommType]):
         pass
 
     async def wait(self, delay: float):
-        """ Wait delay seconds.
+        """Wait delay seconds.
 
-        This function is useful with scheduling to schedule short waits between moves."""
+        This function is useful with scheduling to schedule short waits between moves.
+        """
         await asyncio.sleep(delay)
 
     @abstractmethod
     async def fly_to(self, local: np.ndarray | None = None, gps: np.ndarray | None = None, yaw: float | None = None,
                      waypoint: Waypoint | None = None, tolerance=0.25):
-        """ Fly to the specified position.
+        """Fly to the specified position.
 
         :param local:
         :param gps:
@@ -582,7 +588,7 @@ class Drone(ABC, Generic[CommType]):
 
     @abstractmethod
     async def move(self, offset: np.ndarray, yaw: float | None = None, use_gps=True, tolerance=0.25):
-        """ Move from the current position by the specified distances.
+        """Move from the current position by the specified distances.
 
         :param offset: A numpy array with the information how much to move along each axis in meters.
         :param yaw:
@@ -614,7 +620,7 @@ class Drone(ABC, Generic[CommType]):
         pass
 
     def clear_queue(self) -> None:
-        """ Clears the action queue.
+        """Clears the action queue.
 
         Does not cancel the current action.
 
@@ -624,7 +630,7 @@ class Drone(ABC, Generic[CommType]):
         self.action_queue.clear()
 
     def cancel_action(self) -> None:
-        """ Cancels the current action task
+        """Cancels the current action task
 
         :return:
         """

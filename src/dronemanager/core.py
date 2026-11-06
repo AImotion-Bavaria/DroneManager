@@ -13,8 +13,7 @@ from typing import Callable
 
 import dronemanager
 import dronemanager.drone
-from dronemanager.comm_protocols.mav import MAVSDKComm
-from dronemanager.drone import Drone, DroneComProtocol, DroneConfigs, DroneConfig
+from dronemanager.drone import Drone, DroneComProtocol, DroneConfigs, DroneConfig, FlightMode
 from dronemanager.navigation.core import Waypoint, Fence
 from dronemanager.navigation.rectlocalfence import RectLocalFence
 from dronemanager.plugin import PluginLoader
@@ -34,8 +33,7 @@ pane_formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s - %(messa
 
 
 class DMConfig:
-    """
-    Configuration class for DroneManager
+    """Configuration class for DroneManager
 
     """
 
@@ -53,7 +51,7 @@ class DMConfig:
         self.default_plugins = default_plugins
         if default_comm_protocols is None:
             default_comm_protocols = []
-        self.default_protocols = default_comm_protocols
+        self.default_comm_protocols = default_comm_protocols
         if plugin_settings is None:
             plugin_settings = {}
         self.plugin_settings: dict[str, dict[str, typing.Any]] = plugin_settings
@@ -96,12 +94,12 @@ class DMConfig:
 
 
 class DroneManager:
-    """
-    Core class of the library.
+    """Core class of the library.
 
     """
 
-    def __init__(self, logger=None, log_to_console=True, console_log_level=logging.INFO):
+    def __init__(self, logger: logging.Logger | None = None, log_to_console: bool = True, load_defaults: bool = True,
+                 console_log_level = logging.INFO):
         self.drones: dict[str, Drone] = {}
         # self.drones acts as the list/manager of connected drones, any function that writes or deletes items should
         # protect those writes/deletes with this lock. Read only functions can ignore it.
@@ -114,10 +112,16 @@ class DroneManager:
         self._on_drone_connect_coros = set()
 
         self.config = DMConfig.from_file(get_config().as_posix())
+
+        #: Load default plugins and comm protocols. Useful for testing or as a"safe-mode"
+        self.load_defaults = load_defaults
+
         self.drone_configs = self.config.drone_configs
 
         self.system_id = self.config.mav_system_id
         self.component_id = self.config.mav_component_id
+
+        self.logging_handlers = set()
 
         if logger is None:
             self.logger = logging.getLogger("Manager")
@@ -128,6 +132,7 @@ class DroneManager:
             file_handler = logging.FileHandler(os.path.join(LOG_DIR, filename))
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.add(file_handler)
             self.logger.addHandler(file_handler)
         else:
             self.logger = logger
@@ -136,6 +141,7 @@ class DroneManager:
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setLevel(console_log_level)
             console_handler.setFormatter(COMMON_FORMATTER)
+            self.logging_handlers.add(console_handler)
             self.logger.addHandler(console_handler)
 
         self.comm_protocols: dict[str, DroneComProtocol] = {}
@@ -144,25 +150,33 @@ class DroneManager:
         self.logger.info(f"Starting DroneManager version {dronemanager.__version__}")
 
     async def start(self):
-        await asyncio.create_task(self._load_default_plugins())
-        await asyncio.create_task(self._load_default_comm_protocols())
+        if self.load_defaults:
+            await asyncio.create_task(self._load_default_plugins())
+            await asyncio.create_task(self._load_default_comm_protocols())
 
     async def _load_default_plugins(self):
         plugin_tasks = []
+        loaded = []
         for plugin_name in self.config.default_plugins:
-            plugin_tasks.append(asyncio.create_task(self.load(plugin_name)))
+            if plugin_name not in self.plugins:
+                plugin_tasks.append(asyncio.create_task(self.load(plugin_name)))
+                loaded.append(plugin_name)
         await asyncio.gather(*plugin_tasks)
-        self.logger.info(f"Loaded startup plugins: {self.plugins}")
+        self.logger.info(f"Loaded startup plugins: {loaded}")
 
     async def _load_default_comm_protocols(self):
         protocol_tasks = []
-        for protocol_name in self.config.default_protocols:
-            protocol_tasks.append(asyncio.create_task(self.add_comm_protocol(protocol_name)))
+        loaded = []
+        for protocol_name in self.config.default_comm_protocols:
+            if protocol_name not in self.comm_protocols:
+                protocol_tasks.append(asyncio.create_task(self.add_comm_protocol(protocol_name)))
+                loaded.append(protocol_name)
         await asyncio.gather(*protocol_tasks)
-        self.logger.info(f"Loaded default comm protocols: {self.comm_protocols}")
+        self.logger.info(f"Loaded default comm protocols: {loaded}")
 
     async def add_comm_protocol(self, name):
         # TODO: Comm discovery? Make them plugins?
+        from dronemanager.comm_protocols.mav import MAVSDKComm
         if name == "mav":
             self.comm_protocols[MAVSDKComm.NAME] = MAVSDKComm(self.logger, system_id=self.system_id,
                                                               component_id=self.component_id)
@@ -240,9 +254,9 @@ class DroneManager:
                 setattr(drone_config, key, value)
         # If a protocol is supplied, prefer that, otherwise use the one from the config (including default)
         if comm_protocol is not None:
-            drone_config.protocol = comm_protocol
+            drone_config.comm_protocol = comm_protocol
         else:
-            comm_protocol = drone_config.protocol
+            comm_protocol = drone_config.comm_protocol
         # If a connection is supplied, prefer that, otherwise use the one from config (including default)
         if conn is not None:
             drone_config.connection = conn
@@ -415,10 +429,10 @@ class DroneManager:
         return await self._multiple_drone_action("takeoff", names,
                                                  "Takeoff for Drone(s) {}.", altitude, schedule=schedule, allow_in_air=allow_in_air)
 
-    async def change_flightmode(self, names: str | Collection[str], flightmode: str, schedule=False):
+    async def change_flightmode(self, names: str | Collection[str], flightmode: FlightMode, schedule=False):
         await self._multiple_drone_action("change_flight_mode",
                                           names,
-                                          "Changing flightmode for drone(s) {} to " + flightmode + ".",
+                                          "Changing flightmode for drone(s) {} to " + flightmode.name + ".",
                                           flightmode, schedule=schedule)
 
     async def land(self, names: str | Collection[str], schedule=False):
@@ -426,7 +440,7 @@ class DroneManager:
                                           "Landing drone(s) {}.", schedule=schedule)
 
     def set_fence(self, names: str | Collection[str], fence: Fence):
-        """ Set a fence on drones"""
+        """Set a fence on drones"""
         if isinstance(names, str):
             names = [names]
         try:
@@ -486,7 +500,7 @@ class DroneManager:
     async def move(self, names: str | Collection[str], offset: Collection[float], yaw: Collection[float] | float | None = None,
                    use_gps: bool | Collection[bool] = True, tol: float | Collection[float] = 0.25,
                    schedule: bool = True):
-        """ Move the drones by offsets meters from their current positions. Which coordinate system is used depends on
+        """Move the drones by offsets meters from their current positions. Which coordinate system is used depends on
         no_gps.
 
         :param names:
@@ -511,15 +525,6 @@ class DroneManager:
         return await self._multiple_drone_multiple_params_action("wait", names,
                                                                  f"Drones {names} waiting", delay,
                                                                  schedule=schedule)
-
-    async def orbit(self, name, radius, velocity, center_lat, center_long, amsl):
-        try:
-            await self.drones[name].orbit(radius, velocity, center_lat, center_long, amsl)
-            self.logger.info(f"{name} flying in a circle.")
-        except KeyError:
-            self.logger.warning(f"No drone named {name}!")
-        except Exception as e:
-            self.logger.error(repr(e))
 
     async def action_stop(self, names):
         if not names:
@@ -560,15 +565,15 @@ class DroneManager:
             pass
 
     async def _remove_drone_object(self, name):
-        try:
-            self.drones.pop(name)
-        except KeyError:
-            pass
         for func in self._on_drone_removal_coros:
             try:
                 await asyncio.create_task(func(name))
             except Exception as e:
                 self.logger.debug(repr(e), exc_info=True)
+        try:
+            self.drones.pop(name)
+        except KeyError:
+            pass
 
     def add_remove_func(self, func):
         self._on_drone_removal_coros.add(func)
@@ -581,11 +586,19 @@ class DroneManager:
         for comm_protocol in self.comm_protocols.values():
             await comm_protocol.close()
         await self.plugin_loader.close()
+        for handler in self.logging_handlers:
+            self.logger.removeHandler(handler)
+
+    def save_config(self, alt_path: str | None = None):
+        if alt_path is None:
+            self.config.to_file(get_config().as_posix())
+        else:
+            self.config.to_file(alt_path)
 
 # PLUGINS ##############################################################################################################
 
     @property
-    def plugin_options(self):
+    def plugin_options(self) -> list[str]:
         return self.plugin_loader.plugin_options()
 
     @property

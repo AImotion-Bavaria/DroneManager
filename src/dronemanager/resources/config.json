@@ -12,10 +12,10 @@
   "plugin_settings": {
     "controllers": {
       "auto_assign": true,
-      "default_mappings": {
+      "default_bindings": {
         "PS4 Controller": "PS4 Controller"
       },
-      "mappings": {
+      "bindings": {
         "PS4 Controller": {
           "name": "PS4 Controller",
           "axes_labels": [
@@ -48,7 +48,7 @@
           "actions": {
             "Thrust": {
               "input_type": "Axis",
-              "input_id": 2
+              "input_id": -2
             },
             "Yaw": {
               "input_type": "Axis",
@@ -76,7 +76,8 @@
             },
             "Takeoff": {
               "input_type": "Button",
-              "input_id": 12
+              "input_id": 12,
+              "cooldown": 2
             },
             "Land": {
               "input_type": "Button",

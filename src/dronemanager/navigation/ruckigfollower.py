@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import time
 
 import ruckig
 
+import dronemanager.drone
 from dronemanager.navigation.core import PathFollower, WayPointType, Waypoint
 from dronemanager.utils import ned_from_gps
-import dronemanager
 
 
 class RuckigOfflineFollower(PathFollower):
@@ -18,7 +20,7 @@ class RuckigOfflineFollower(PathFollower):
                       WayPointType.POS_VEL_ACC_NED,
                       WayPointType.POS_GLOBAL}
 
-    def __init__(self, drone: "dronemanager.drone.Drone", logger, dt: float, setpoint_type,
+    def __init__(self, drone: dronemanager.drone.Drone, logger, dt: float, setpoint_type,
                  max_vel = 10.0, max_acc = 2.0, max_jerk = 1.0,
                  max_down_vel = 1.0, max_up_vel = 3.0, max_v_acc = 0.5, max_v_jerk = 1.0,
                  max_yaw_vel = 60, max_yaw_acc = 30, max_yaw_jerk = 30):
@@ -118,7 +120,7 @@ class RuckigOfflineFollower(PathFollower):
                     self.traj_start_time = time.time()
                 else:
                     self.logger.warning("Path follower is failing to produce setpoints, switching to 'HOLD' and deactivating")
-                    await self.drone.change_flight_mode("hold")
+                    await self.drone.change_flight_mode(dronemanager.drone.FlightMode.HOLD)
                     await self.deactivate()
             # Set setpoint
             cur_time = time.time()-self.traj_start_time
@@ -208,7 +210,5 @@ class RuckigOnlineFollower(PathFollower):
         else:
             # TODO: Come up with something better to do here
             self.logger.warning("Path follower is failing to produce setpoints, switching to 'HOLD' and deactivating")
-            await self.drone.change_flight_mode("hold")
+            await self.drone.change_flight_mode(dronemanager.drone.FlightMode.HOLD)
             await self.deactivate()
-
-
