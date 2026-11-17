@@ -48,7 +48,7 @@
           "actions": {
             "Thrust": {
               "input_type": "Axis",
-              "input_id": -2
+              "input_id": 2
             },
             "Yaw": {
               "input_type": "Axis",

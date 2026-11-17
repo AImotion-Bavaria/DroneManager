@@ -1038,7 +1038,7 @@ class MAVSDKDrone(Drone[MAVSDKComm]):
         return True
 
     async def set_manual_control_input(self, x, y, z, r):
-        z = (z + 1) / 2  # Mavlink wants input from 0 to 1 with up positive
+        z = (-z + 1) / 2  # Mavlink wants input from 0 to 1 with up positive
         result = await self._error_wrapper(self.mavmanual.set_manual_control_input, ManualControlError, x, y, z, r)
         return result is None
 
