@@ -12,10 +12,10 @@
   "plugin_settings": {
     "controllers": {
       "auto_assign": true,
-      "default_mappings": {
+      "default_bindings": {
         "PS4 Controller": "PS4 Controller"
       },
-      "mappings": {
+      "bindings": {
         "PS4 Controller": {
           "name": "PS4 Controller",
           "axes_labels": [
@@ -76,7 +76,8 @@
             },
             "Takeoff": {
               "input_type": "Button",
-              "input_id": 12
+              "input_id": 12,
+              "cooldown": 2
             },
             "Land": {
               "input_type": "Button",

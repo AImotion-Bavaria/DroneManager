@@ -6,6 +6,7 @@ import time
 
 import numpy as np
 
+from dronemanager.drone import FlightMode
 from dronemanager.plugins.mission import Mission, MissionStage, FlightArea
 from dronemanager.utils import dist_ned
 from dronemanager.navigation.core import Waypoint, WayPointType
@@ -73,7 +74,7 @@ class FakeBattery:
 
 
 class UAMMission(Mission):
-    """ Multi-Stage mission for the UAM Demo 2025.
+    """Multi-Stage mission for the UAM Demo 2025.
 
     The demo consists of two stages:T
 
@@ -112,7 +113,7 @@ class UAMMission(Mission):
         self.poi_position = [-2, 0, -self.flight_altitude]  # in NED, altitude is just for convenient distance check.
         self.poi_tolerance = 1.2
         self.update_rate = 5  # Mission state is checked and progressed this often per second.
-        self.fence = RectLocalFence(*self.flight_area.bounding_box(), safety_level=3)
+        self.fence = RectLocalFence(*self.flight_area.bounding_box, safety_level=3)
 
         # SingleSearch Parameters
         self.single_search_forward_leg = 1  # in meters
@@ -458,7 +459,7 @@ class UAMMission(Mission):
             self.current_stage = UAMStages.Uninitialized
 
     def _get_drones_by_batterylevel(self):
-        """ Note that the stored battery level is negative, as the lowest value is returned by the priority queue."""
+        """Note that the stored battery level is negative, as the lowest value is returned by the priority queue."""
         drones_by_batterylevel = PriorityQueue()
         for drone in self.drones:
             if drone == self._observing_drone:
@@ -467,8 +468,9 @@ class UAMMission(Mission):
         return drones_by_batterylevel
 
     async def _swap_launch_new_drone(self) -> str:
-        """ Pick the drone with the highest battery and try to launch it. If that doesn't work, for example if the drone
-        doesn't arm, try a different drone."""
+        """Pick the drone with the highest battery and try to launch it. If that doesn't work, for example if the drone
+        doesn't arm, try a different drone.
+        """
         drones_by_batterylevel = self._get_drones_by_batterylevel()
         swap_drone = None
         while not swap_drone:
@@ -522,9 +524,10 @@ class UAMMission(Mission):
         self.current_stage = UAMStages.Return
 
     async def _rtb(self):
-        """ Return to base stage.
+        """Return to base stage.
 
-        Returns all drones still out in the field back to their start positions"""
+        Returns all drones still out in the field back to their start positions
+        """
         assert self.ready()
         try:
             # Do the thing, one after another
@@ -564,7 +567,7 @@ class UAMMission(Mission):
         except KeyError:
             pass
         await asyncio.sleep(0.5) # Wait a couple of beats
-        await self.dm.change_flightmode(drone, "position")
+        await self.dm.change_flightmode(drone, FlightMode.POSCTL)
 
     def _yaw_to_point(self, drone, position):
         dx = position[0] - self.dm.drones[drone].position_ned[0]
@@ -624,9 +627,10 @@ class UAMMission(Mission):
         return False
 
     async def set_start(self):
-        """ Set the current stage to the start stage.
+        """Set the current stage to the start stage.
 
-        This should be called/used when the drones are all setup at their starting positions already."""
+        This should be called/used when the drones are all setup at their starting positions already.
+        """
         self.logger.info("Set to Start stage!")
         # Reset all the dynamic attributes
         self._found_poi = None
@@ -638,7 +642,7 @@ class UAMMission(Mission):
         self.current_stage = UAMStages.Start
 
     async def set_uninit(self):
-        """ Set the current stage to Uninitialized.
+        """Set the current stage to Uninitialized.
 
         This function is only useful on a CLI to be able to reset without moving any drones. Some computations are
         performed when the "Start" stage is entered. Setting to Uninitialized and back allows reperforming these.

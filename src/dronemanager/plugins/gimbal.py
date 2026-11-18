@@ -11,10 +11,14 @@ from mavsdk.asyncio.plugins.gimbal import ControlMode as MAVControlMode
 from mavsdk.asyncio.plugins.gimbal import GimbalMode as MAVGimbalMode
 from mavsdk.asyncio.plugins.gimbal import SendMode as MAVSendMode
 
+
 # Reuse MAVSDK constants for now
 ControlMode = MAVControlMode
 YawMode = MAVGimbalMode
 SendMode = MAVSendMode
+
+SUPPORTS_STRING: str = "gimbal"
+"""Entry in the :py:class:`~dronemanager.drone.DroneComProtocol` SUPPORTS dictionary for this plugin."""
 
 
 class GimbalPlugin(Plugin):
@@ -49,7 +53,7 @@ class GimbalPlugin(Plugin):
         self.logger.debug("Started Gimbal plugin.")
 
     async def close(self):
-        """ Removes all gimbals """
+        """Removes all gimbals"""
         await super().close()
         coros = [self.remove_gimbals(drone) for drone in self.gimbals]
         await asyncio.gather(*coros)
@@ -62,16 +66,16 @@ class GimbalPlugin(Plugin):
 
     async def _get_potential_gimbal_idents(self, drone: str):
         drone_obj = self.dm.drones[drone]
-        if "gimbal" not in drone_obj.comm.SUPPORTS:
-            self.logger.info(f"The communication protocol {drone_obj.comm} for {drone} does not support gimbals!")
-        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS["gimbal"]
+        if SUPPORTS_STRING not in drone_obj.comm.SUPPORTS:
+            self.logger.info(f"The communication protocol {drone_obj.comm.NAME} for {drone} does not support gimbals!")
+        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS[SUPPORTS_STRING]
         gimbal_identifiers = await gimbal_class.get_gimbals(drone_obj)
         return gimbal_identifiers
 
     async def list_potential_gimbals(self, drone: str):
         gimbal_identifiers = await self._get_potential_gimbal_idents(drone)
         drone_obj = self.dm.drones[drone]
-        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS["gimbal"]
+        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS[SUPPORTS_STRING]
         if len(gimbal_identifiers) == 0:
             self.logger.info(f"No gimbals found for {drone}")
         out_str = "\n".join([gimbal_class.prettify_identifier(identifier) for identifier in gimbal_identifiers])
@@ -82,7 +86,7 @@ class GimbalPlugin(Plugin):
         """Add Gimbals from/for a given drone to the plugin"""
         gimbal_identifiers = await self._get_potential_gimbal_idents(drone)
         drone_obj = self.dm.drones[drone]
-        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS["gimbal"]
+        gimbal_class: Type[Gimbal] = drone_obj.comm.SUPPORTS[SUPPORTS_STRING]
         if len(gimbal_identifiers) == 0:
             self.logger.info(f"No gimbals found for {drone}")
             return False
@@ -220,7 +224,8 @@ class Gimbal(ABC, Generic[DroneType]):
         """Close the gimbal object, releasing any resources.
 
         This base implementation releases control and cancels running tasks. Implementing classes should call this
-        during their own close procedure."""
+        during their own close procedure.
+        """
         try:
             await self.release_control()
         except Exception as e:

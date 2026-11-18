@@ -5,7 +5,7 @@ from dronemanager.navigation.core import Fence, Waypoint, WayPointType
 
 
 class RectLocalFence(Fence):
-    """ Class for rectangular fences in the local coordinate frame.
+    """Class for rectangular fences in the local coordinate frame.
 
     Works by defining yis limits: One upper and lower limit for each axis. Waypoints will only be accepted
     if they use local (NED) coordinates and lie within the box between these limits.
@@ -58,6 +58,11 @@ class RectLocalFence(Fence):
         x, y, z = drone.position_ned #+ drone.velocity  # Add the speed to compensate for existing motion a little better
         yaw = drone.attitude[2]
 
+        # Yaw is very easy: Just scale based on ratio between max allowed and max on drone:
+        max_yaw_rate = drone.drone_params.max_yaw_rate
+        yaw_rate_limit = drone.config.max_yaw_vel if drone.config.max_yaw_vel < max_yaw_rate else max_yaw_rate
+        yaw_input = yaw_input * yaw_rate_limit / max_yaw_rate
+
         # Vertical is easy: Just check distance and scale accordingly
 
         def _limit_speed(distance, speed_limit, acceleration):
@@ -71,15 +76,15 @@ class RectLocalFence(Fence):
         speed_limit_down = _limit_speed(self.down_upper - z, speed_limit_down, acceleration_vertical)
         speed_limit_up = _limit_speed(z - self.down_lower, speed_limit_up, acceleration_vertical)
 
-        def _adjust_input(c_input, speed, speed_limit_a, speed_limit_b, max_speed_a, max_speed_b):
-            if speed > 0 and speed > speed_limit_a:
+        def _adjust_input(c_input, target_speed, speed_limit_a, speed_limit_b, max_speed_a, max_speed_b):
+            if target_speed > 0 and target_speed > speed_limit_a:
                 c_input = c_input * speed_limit_a / max_speed_a
-            elif speed < 0 and speed < speed_limit_b:
+            elif target_speed < 0 and target_speed < speed_limit_b:
                 c_input = c_input * speed_limit_b / max_speed_b
             return c_input
 
-        vertical_speed = vertical_input * max_speed_up if vertical_input < 0 else vertical_input * max_speed_down
-        vertical_input = _adjust_input(vertical_input, vertical_speed, speed_limit_down, speed_limit_up,
+        target_vertical_speed = vertical_input * max_speed_up if vertical_input < 0 else vertical_input * max_speed_down
+        vertical_input = _adjust_input(vertical_input, target_vertical_speed, speed_limit_down, speed_limit_up,
                                        max_speed_down, max_speed_up)
 
         # for horizontal motion, determine the input heading in the fence coordinate system and then determine the
@@ -134,6 +139,7 @@ class RectLocalFence(Fence):
         forward_input = clamp_output_values(forward_input)
         right_input = clamp_output_values(right_input)
         vertical_input = clamp_output_values(vertical_input)
+        yaw_input = clamp_output_values(yaw_input)
 
         #self.logger.info(f"{scaling_factor, speed_limit_horizontal, drone.config.max_h_vel, distance_horizontal, acceleration_horizontal}")
 

@@ -13,8 +13,7 @@ class GMP3Config:
                  vx_max, vy_max, vz_max,
                  Q11, Q22, Q33, Q12, Q13, Q23,
                  dt, x_max, x_min, y_max, y_min, z_max, z_min, obstacles=None):
-        """
-        Obstacles: list of tuples (x, y, z, r)
+        """Obstacles: list of tuples (x, y, z, r)
         """
         self.maxit  = maxit
         self.alpha  = alpha
